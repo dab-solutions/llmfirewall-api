@@ -8,9 +8,39 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 import asyncio
 import os
 import json
+import logging
+import logging.handlers
+from datetime import datetime
+
+# Configure logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+LOG_FILE = f"llamafirewall_api_{datetime.now().strftime('%Y%m%d')}.log"
+
+# Create logs directory if it doesn't exist
+os.makedirs("logs", exist_ok=True)
+
+# Configure root logger
+logger = logging.getLogger("llamafirewall_api")
+logger.setLevel(getattr(logging, LOG_LEVEL))
+
+# Console handler
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+logger.addHandler(console_handler)
+
+# File handler with rotation
+file_handler = logging.handlers.RotatingFileHandler(
+    filename=os.path.join("logs", LOG_FILE),
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5
+)
+file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+logger.addHandler(file_handler)
 
 # Get thread pool configuration from environment
 THREAD_POOL_WORKERS = int(os.getenv("THREAD_POOL_WORKERS", "4"))  # Default to 4 workers if not specified
+logger.info(f"Initializing thread pool with {THREAD_POOL_WORKERS} workers")
 
 # Create thread pool executor at startup
 thread_pool = ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS)
@@ -36,18 +66,22 @@ def parse_scanners_config() -> Dict[Role, List[ScannerType]]:
     }
 
     config_str = os.getenv("LLAMAFIREWALL_SCANNERS", "{}")
+    logger.debug(f"Parsing scanner configuration: {config_str}")
+
     try:
         # Parse the JSON configuration
         config_dict = json.loads(config_str)
 
         # Validate configuration structure
         if not isinstance(config_dict, dict):
+            logger.error("Invalid scanner configuration: must be a JSON object")
             raise ValueError("Invalid scanner configuration: must be a JSON object")
 
         # Convert string keys to Role enum and string values to ScannerType enum
         scanners = {}
         for role_str, scanner_list in config_dict.items():
             if not isinstance(scanner_list, list):
+                logger.error(f"Invalid scanner list for role {role_str}: must be an array")
                 raise ValueError(f"Invalid scanner list for role {role_str}: must be an array")
 
             try:
@@ -56,20 +90,25 @@ def parse_scanners_config() -> Dict[Role, List[ScannerType]]:
                 scanners[role] = []
                 for scanner in scanner_list:
                     if not isinstance(scanner, str):
+                        logger.error(f"Invalid scanner type: {scanner}")
                         raise ValueError(f"Invalid scanner type: {scanner}")
                     if scanner == "MODERATION":
                         # Check if OpenAI API key is configured
                         if not os.getenv("OPENAI_API_KEY"):
+                            logger.error("OPENAI_API_KEY environment variable is required when using MODERATION scanner")
                             raise ValueError("OPENAI_API_KEY environment variable is required when using MODERATION scanner")
                         moderation = True
+                        logger.info("OpenAI moderation enabled")
                     else:
                         scanners[role].append(ScannerType[scanner])
             except KeyError as e:
+                logger.error(f"Invalid role or scanner type: {e}")
                 raise ValueError(f"Invalid role or scanner type: {e}")
         
+        logger.info(f"Scanner configuration loaded: {scanners if scanners else default_config}")
         return scanners if scanners else default_config
     except json.JSONDecodeError:
-        print("Warning: Invalid JSON in LLAMAFIREWALL_SCANNERS, using default configuration")
+        logger.warning("Invalid JSON in LLAMAFIREWALL_SCANNERS, using default configuration")
         return default_config
 
 # Cache scanner configuration at startup
@@ -126,12 +165,13 @@ class ScanResponse(BaseModel, frozen=True):
 async def perform_openai_moderation(content: str) -> OpenAIModerationResponse:
     """Perform OpenAI moderation with retry logic."""
     try:
+        logger.debug("Performing OpenAI moderation")
         response = await async_client.moderations.create(
             model="omni-moderation-latest",
             input=content
         )
 
-        return OpenAIModerationResponse(
+        result = OpenAIModerationResponse(
             id=response.id,
             model=response.model,
             results=[
@@ -143,7 +183,15 @@ async def perform_openai_moderation(content: str) -> OpenAIModerationResponse:
                 for result in response.results
             ]
         )
+
+        if any(r.flagged for r in result.results):
+            logger.warning(f"Content flagged by OpenAI moderation: {result}")
+        else:
+            logger.debug("Content passed OpenAI moderation")
+
+        return result
     except Exception as e:
+        logger.error(f"Error during content moderation: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail="Error during content moderation"
@@ -164,15 +212,19 @@ async def scan_message(request: ScanRequest):
     Raises:
         HTTPException: If there's an error during scanning
     """
+    logger.info("Received scan request")
     try:
         # Always use LlamaFirewall first
         message = UserMessage(content=request.content)
+        logger.debug("Starting LlamaFirewall scan")
 
         # Use thread pool for LlamaFirewall scan
         llama_result = await asyncio.get_event_loop().run_in_executor(
             thread_pool,
             lambda: llamafirewall.scan(message)
         )
+
+        logger.info(f"LlamaFirewall scan result: decision={llama_result.decision}, score={llama_result.score}")
 
         # Initialize response with LlamaFirewall results
         response = ScanResponse(
@@ -184,6 +236,7 @@ async def scan_message(request: ScanRequest):
         
         # Add OpenAI moderation if enabled
         if moderation:
+            logger.debug("Starting OpenAI moderation")
             # Perform OpenAI moderation asynchronously
             moderation_response = await perform_openai_moderation(request.content)
 
@@ -203,10 +256,12 @@ async def scan_message(request: ScanRequest):
                 moderation_results=moderation_response,
                 scan_type="llamafirewall+openai_moderation"
             )
-        
+            logger.info(f"Final scan result with moderation: is_safe={response.is_safe}")
+
         return response
 
     except Exception as e:
+        logger.error(f"Error processing scan request: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail="Error processing scan request"
@@ -215,11 +270,13 @@ async def scan_message(request: ScanRequest):
 @app.get("/health")
 async def health_check():
     """Health check endpoint to verify the API is running."""
+    logger.debug("Health check requested")
     return {"status": "healthy"}
 
 @app.get("/config")
 async def get_config():
     """Get the current scanner configuration."""
+    logger.debug("Config requested")
     config = {
         "scanners": {
             role.name: [scanner.name for scanner in scanners]
@@ -233,9 +290,12 @@ async def get_config():
             if "MODERATION" not in config["scanners"][role]:
                 config["scanners"][role].append("MODERATION")
 
+    logger.debug(f"Returning config: {config}")
     return config
 
 # Cleanup on shutdown
 @app.on_event("shutdown")
 async def shutdown_event():
+    logger.info("Shutting down application")
     thread_pool.shutdown(wait=True)
+    logger.info("Thread pool shutdown complete")
