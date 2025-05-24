@@ -15,13 +15,13 @@ from datetime import datetime
 # Configure logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-LOG_FILE = f"llamafirewall_api_{datetime.now().strftime('%Y%m%d')}.log"
+LOG_FILE = f"llmfirewall_api_{datetime.now().strftime('%Y%m%d')}.log"
 
 # Create logs directory if it doesn't exist
 os.makedirs("logs", exist_ok=True)
 
 # Configure root logger
-logger = logging.getLogger("llamafirewall_api")
+logger = logging.getLogger("llmfirewall_api")
 logger.setLevel(getattr(logging, LOG_LEVEL))
 
 # Console handler
