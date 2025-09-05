@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="LLM Firewall API Configuration Panel">
+    <title>LLM Firewall API - Configuration</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <!-- Prevent favicon 404 -->
+    <link rel="icon" href="data:,">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>LLM Firewall API</h1>
+            <p class="subtitle">Security Configuration Panel</p>
+        </header>
+
+        <main id="maincontent">
+            <!-- Skip Link for accessibility -->
+            <a href="#maincontent" class="sr-only">Skip to main content</a>
+            
+            <div class="status-bar" id="statusBar" role="status" aria-live="polite" aria-atomic="true">
+                <span class="status-text" id="statusText">Ready</span>
+            </div>
+
+            <div class="tabs" role="tablist" aria-label="Configuration Sections">
+                <button 
+                    class="tab-button active" 
+                    id="tab-performance" 
+                    role="tab" 
+                    aria-selected="true" 
+                    aria-controls="panel-performance"
+                    tabindex="0"
+                >
+                    Performance
+                </button>
+                <button 
+                    class="tab-button" 
+                    id="tab-api-keys" 
+                    role="tab" 
+                    aria-selected="false" 
+                    aria-controls="panel-api-keys"
+                    tabindex="-1"
+                >
+                    API Keys
+                </button>
+                <button 
+                    class="tab-button" 
+                    id="tab-llamafirewall" 
+                    role="tab" 
+                    aria-selected="false" 
+                    aria-controls="panel-llamafirewall"
+                    tabindex="-1"
+                >
+                    LlamaFirewall
+                </button>
+                <button 
+                    class="tab-button" 
+                    id="tab-llmguard" 
+                    role="tab" 
+                    aria-selected="false" 
+                    aria-controls="panel-llmguard"
+                    tabindex="-1"
+                >
+                    LLM Guard
+                </button>
+                <button 
+                    class="tab-button" 
+                    id="tab-advanced" 
+                    role="tab" 
+                    aria-selected="false" 
+                    aria-controls="panel-advanced"
+                    tabindex="-1"
+                >
+                    Advanced
+                </button>
+                <button 
+                    class="tab-button" 
+                    id="tab-monitoring" 
+                    role="tab" 
+                    aria-selected="false" 
+                    aria-controls="panel-monitoring"
+                    tabindex="-1"
+                >
+                    Monitoring
+                </button>
+            </div>
+
+            <form id="configForm" novalidate>
+                <!-- Performance Configuration -->
+                <div class="tab-panel active" id="panel-performance" role="tabpanel" aria-labelledby="tab-performance">
+                    <h2>Performance Configuration</h2>
+                    <div class="form-group">
+                        <label for="threadPoolWorkers">
+                            Thread Pool Workers
+                            <span class="required" aria-label="required">*</span>
+                        </label>
+                        <input 
+                            type="number" 
+                            id="threadPoolWorkers" 
+                            name="THREAD_POOL_WORKERS" 
+                            min="1" 
+                            max="32" 
+                            value="4"
+                            aria-describedby="threadPoolWorkers-help"
+                            required
+                        >
+                        <div class="help-text" id="threadPoolWorkers-help">
+                            Number of worker threads for processing scan requests. Adjust based on your server's CPU cores and expected load.
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="logLevel">
+                            Log Level
+                        </label>
+                        <select 
+                            id="logLevel" 
+                            name="LOG_LEVEL"
+                            aria-describedby="logLevel-help"
+                        >
+                            <option value="DEBUG">DEBUG</option>
+                            <option value="INFO" selected>INFO</option>
+                            <option value="WARNING">WARNING</option>
+                            <option value="ERROR">ERROR</option>
+                            <option value="CRITICAL">CRITICAL</option>
+                        </select>
+                        <div class="help-text" id="logLevel-help">
+                            Set the logging level for the application. DEBUG provides the most verbose output, CRITICAL the least.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- API Keys Configuration -->
+                <div class="tab-panel" id="panel-api-keys" role="tabpanel" aria-labelledby="tab-api-keys">
+                    <h2>API Keys Configuration</h2>
+                    
+                    <div class="form-group">
+                        <label for="hfToken">
+                            Hugging Face Token
+                            <span class="required" aria-label="required">*</span>
+                        </label>
+                        <input 
+                            type="password" 
+                            id="hfToken" 
+                            name="HF_TOKEN" 
+                            aria-describedby="hfToken-help"
+                            autocomplete="off"
+                            required
+                        >
+                        <div class="help-text" id="hfToken-help">
+                            Get your token from: <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">https://huggingface.co/settings/tokens</a>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="togetherApiKey">
+                            Together API Key
+                            <span class="optional">(Optional)</span>
+                        </label>
+                        <input 
+                            type="password" 
+                            id="togetherApiKey" 
+                            name="TOGETHER_API_KEY" 
+                            aria-describedby="togetherApiKey-help"
+                            autocomplete="off"
+                        >
+                        <div class="help-text" id="togetherApiKey-help">
+                            Required only if using PII_DETECTION scanner. Get your API key from: <a href="https://www.together.ai/" target="_blank" rel="noopener noreferrer">https://www.together.ai/</a>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="openaiApiKey">
+                            OpenAI API Key
+                            <span class="optional">(Optional)</span>
+                        </label>
+                        <input 
+                            type="password" 
+                            id="openaiApiKey" 
+                            name="OPENAI_API_KEY" 
+                            aria-describedby="openaiApiKey-help"
+                            autocomplete="off"
+                        >
+                        <div class="help-text" id="openaiApiKey-help">
+                            Required if using MODERATION scanner. Get your key from: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">https://platform.openai.com/api-keys</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- LlamaFirewall Configuration -->
+                <div class="tab-panel" id="panel-llamafirewall" role="tabpanel" aria-labelledby="tab-llamafirewall">
+                    <h2>LlamaFirewall Scanner Configuration</h2>
+                    
+                    <div class="form-group">
+                        <label for="llamafirewallScanners">Scanner Configuration</label>
+                        <div class="scanner-grid" role="group" aria-labelledby="llamafirewall-scanners-legend">
+                            <fieldset>
+                                <legend id="llamafirewall-scanners-legend">Available LlamaFirewall Scanners</legend>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="scanner-prompt-guard" value="PROMPT_GUARD" checked>
+                                    <label for="scanner-prompt-guard">PROMPT_GUARD</label>
+                                </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="scanner-pii-detection" value="PII_DETECTION">
+                                    <label for="scanner-pii-detection">PII_DETECTION</label>
+                                </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="scanner-hidden-ascii" value="HIDDEN_ASCII">
+                                    <label for="scanner-hidden-ascii">HIDDEN_ASCII</label>
+                                </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="scanner-agent-alignment" value="AGENT_ALIGNMENT">
+                                    <label for="scanner-agent-alignment">AGENT_ALIGNMENT</label>
+                                </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="scanner-code-shield" value="CODE_SHIELD">
+                                    <label for="scanner-code-shield">CODE_SHIELD</label>
+                                </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="scanner-moderation" value="MODERATION">
+                                    <label for="scanner-moderation">MODERATION</label>
+                                </div>
+                            </fieldset>
+                        </div>
+                        <input type="hidden" id="llamafirewallScanners" name="LLAMAFIREWALL_SCANNERS">
+                    </div>
+                </div>
+
+                <!-- LLM Guard Configuration -->
+                <div class="tab-panel" id="panel-llmguard" role="tabpanel" aria-labelledby="tab-llmguard">
+                    <h2>LLM Guard Configuration</h2>
+                    
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="llmguardEnabled" name="LLMGUARD_ENABLED">
+                            <label for="llmguardEnabled">Enable LLM Guard</label>
+                        </div>
+                    </div>
+
+                    <div class="form-section" id="llmguard-settings">
+                        <h3>Input Scanners</h3>
+                        <div class="scanner-grid" role="group" aria-labelledby="llmguard-input-scanners-legend">
+                            <fieldset>
+                                <legend id="llmguard-input-scanners-legend">Available Input Scanners</legend>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="input-scanner-prompt-injection" value="PromptInjection">
+                                    <label for="input-scanner-prompt-injection">PromptInjection</label>
+                                </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="input-scanner-toxicity" value="Toxicity">
+                                    <label for="input-scanner-toxicity">Toxicity</label>
+                                </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="input-scanner-secrets" value="Secrets">
+                                    <label for="input-scanner-secrets">Secrets</label>
+                                </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="input-scanner-code" value="Code">
+                                    <label for="input-scanner-code">Code</label>
+                                </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="input-scanner-gibberish" value="Gibberish">
+                                    <label for="input-scanner-gibberish">Gibberish</label>
+                                </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="input-scanner-invisible-text" value="InvisibleText">
+                                    <label for="input-scanner-invisible-text">InvisibleText</label>
+                                </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="input-scanner-token-limit" value="TokenLimit">
+                                    <label for="input-scanner-token-limit">TokenLimit</label>
+                                </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="input-scanner-sentiment" value="Sentiment">
+                                    <label for="input-scanner-sentiment">Sentiment</label>
+                                </div>
+                            </fieldset>
+                        </div>
+                        <input type="hidden" id="llmguardInputScanners" name="LLMGUARD_INPUT_SCANNERS">
+
+                        <h3>Scanner Thresholds</h3>
+                        <div class="threshold-grid">
+                            <div class="form-group">
+                                <label for="toxicityThreshold">Toxicity Threshold</label>
+                                <input 
+                                    type="range" 
+                                    id="toxicityThreshold" 
+                                    name="LLMGUARD_TOXICITY_THRESHOLD" 
+                                    min="0" 
+                                    max="1" 
+                                    step="0.1" 
+                                    value="0.7"
+                                    aria-describedby="toxicityThreshold-value"
+                                >
+                                <span class="threshold-value" id="toxicityThreshold-value">0.7</span>
+                            </div>
+                            <div class="form-group">
+                                <label for="promptInjectionThreshold">Prompt Injection Threshold</label>
+                                <input 
+                                    type="range" 
+                                    id="promptInjectionThreshold" 
+                                    name="LLMGUARD_PROMPT_INJECTION_THRESHOLD" 
+                                    min="0" 
+                                    max="1" 
+                                    step="0.1" 
+                                    value="0.8"
+                                    aria-describedby="promptInjectionThreshold-value"
+                                >
+                                <span class="threshold-value" id="promptInjectionThreshold-value">0.8</span>
+                            </div>
+                            <div class="form-group">
+                                <label for="sentimentThreshold">Sentiment Threshold</label>
+                                <input 
+                                    type="range" 
+                                    id="sentimentThreshold" 
+                                    name="LLMGUARD_SENTIMENT_THRESHOLD" 
+                                    min="0" 
+                                    max="1" 
+                                    step="0.1" 
+                                    value="0.5"
+                                    aria-describedby="sentimentThreshold-value"
+                                >
+                                <span class="threshold-value" id="sentimentThreshold-value">0.5</span>
+                            </div>
+                            <div class="form-group">
+                                <label for="biasThreshold">Bias Threshold</label>
+                                <input 
+                                    type="range" 
+                                    id="biasThreshold" 
+                                    name="LLMGUARD_BIAS_THRESHOLD" 
+                                    min="0" 
+                                    max="1" 
+                                    step="0.1" 
+                                    value="0.7"
+                                    aria-describedby="biasThreshold-value"
+                                >
+                                <span class="threshold-value" id="biasThreshold-value">0.7</span>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="tokenLimit">Token Limit</label>
+                            <input 
+                                type="number" 
+                                id="tokenLimit" 
+                                name="LLMGUARD_TOKEN_LIMIT"
+                                min="100" 
+                                max="32000" 
+                                value="4096"
+                                aria-describedby="tokenLimit-help"
+                            >
+                            <div class="help-text" id="tokenLimit-help">
+                                Maximum number of tokens allowed in input text.
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="failFast" name="LLMGUARD_FAIL_FAST" checked>
+                                <label for="failFast">Fail Fast (stop on first failure)</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Advanced Configuration -->
+                <div class="tab-panel" id="panel-advanced" role="tabpanel" aria-labelledby="tab-advanced">
+                    <h2>Advanced Configuration</h2>
+                    
+                    <h3>LLM Guard Scanner Configurations</h3>
+                    <p class="help-text">Configure specific parameters for LLM Guard scanners when enabled.</p>
+                    
+                    <div class="form-group">
+                        <label for="anonymizeEntities">
+                            Anonymize Entities (JSON Array)
+                        </label>
+                        <textarea 
+                            id="anonymizeEntities" 
+                            name="LLMGUARD_ANONYMIZE_ENTITIES" 
+                            rows="3"
+                            aria-describedby="anonymizeEntities-help"
+                            placeholder='["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER"]'
+                        >["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER"]</textarea>
+                        <div class="help-text" id="anonymizeEntities-help">
+                            Entity types to anonymize when using the Anonymize scanner. Supported: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, CREDIT_CARD, etc.
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="codeLanguages">
+                            Code Languages (JSON Array)
+                        </label>
+                        <textarea 
+                            id="codeLanguages" 
+                            name="LLMGUARD_CODE_LANGUAGES" 
+                            rows="3"
+                            aria-describedby="codeLanguages-help"
+                            placeholder='["python", "javascript", "java", "sql"]'
+                        >["python", "javascript", "java", "sql"]</textarea>
+                        <div class="help-text" id="codeLanguages-help">
+                            Programming languages to scan for when using the Code scanner.
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="competitors">
+                            Banned Competitors (JSON Array)
+                        </label>
+                        <textarea 
+                            id="competitors" 
+                            name="LLMGUARD_COMPETITORS" 
+                            rows="3"
+                            aria-describedby="competitors-help"
+                            placeholder='["openai", "anthropic", "google"]'
+                        >["openai", "anthropic", "google"]</textarea>
+                        <div class="help-text" id="competitors-help">
+                            Competitor names to ban mentions of when using the BanCompetitors scanner.
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="bannedSubstrings">
+                            Banned Substrings (JSON Array)
+                        </label>
+                        <textarea 
+                            id="bannedSubstrings" 
+                            name="LLMGUARD_BANNED_SUBSTRINGS" 
+                            rows="3"
+                            aria-describedby="bannedSubstrings-help"
+                            placeholder='["hack", "exploit", "bypass"]'
+                        >["hack", "exploit", "bypass"]</textarea>
+                        <div class="help-text" id="bannedSubstrings-help">
+                            Substrings to ban when using the BanSubstrings scanner.
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="bannedTopics">
+                            Banned Topics (JSON Array)
+                        </label>
+                        <textarea 
+                            id="bannedTopics" 
+                            name="LLMGUARD_BANNED_TOPICS" 
+                            rows="3"
+                            aria-describedby="bannedTopics-help"
+                            placeholder='["violence", "illegal"]'
+                        >["violence", "illegal"]</textarea>
+                        <div class="help-text" id="bannedTopics-help">
+                            Topics to ban when using the BanTopics scanner.
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="validLanguages">
+                            Valid Languages (JSON Array)
+                        </label>
+                        <textarea 
+                            id="validLanguages" 
+                            name="LLMGUARD_VALID_LANGUAGES" 
+                            rows="3"
+                            aria-describedby="validLanguages-help"
+                            placeholder='["en"]'
+                        >["en"]</textarea>
+                        <div class="help-text" id="validLanguages-help">
+                            Valid languages for content when using the Language scanner. Use ISO 639-1 codes.
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="regexPatterns">
+                            Regex Patterns (JSON Array)
+                        </label>
+                        <textarea 
+                            id="regexPatterns" 
+                            name="LLMGUARD_REGEX_PATTERNS" 
+                            rows="3"
+                            aria-describedby="regexPatterns-help"
+                            placeholder='["^(?!.*password).*$"]'
+                        >["^(?!.*password).*$"]</textarea>
+                        <div class="help-text" id="regexPatterns-help">
+                            Regular expression patterns for validation when using the Regex scanner.
+                        </div>
+                    </div>
+
+                    <h3>System Configuration</h3>
+                    
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="tokenizersParallelism" name="TOKENIZERS_PARALLELISM">
+                            <label for="tokenizersParallelism">Enable Tokenizers Parallelism</label>
+                        </div>
+                        <div class="help-text">
+                            Set to false to disable tokenizer parallelism. This can help with memory usage in some environments.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- API Monitoring -->
+                <div class="tab-panel" id="panel-monitoring" role="tabpanel" aria-labelledby="tab-monitoring">
+                    <h2>API Request Monitoring</h2>
+                    <p class="help-text">Real-time monitoring of API requests and responses. Track security scans, performance metrics, and system usage.</p>
+                    
+                    <div class="monitoring-controls">
+                        <div class="control-group">
+                            <button type="button" id="refreshRequests" class="btn btn-secondary">
+                                🔄 Refresh
+                            </button>
+                            <button type="button" id="clearRequests" class="btn btn-secondary">
+                                🗑️ Clear History
+                            </button>
+                            <button type="button" id="autoRefreshToggle" class="btn btn-secondary">
+                                ⏸️ Auto-Refresh: ON
+                            </button>
+                        </div>
+                        <div class="stats-group">
+                            <div class="stat-item">
+                                <span class="stat-label">Total Requests:</span>
+                                <span id="totalRequests" class="stat-value">0</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Success Rate:</span>
+                                <span id="successRate" class="stat-value">0%</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Avg Response Time:</span>
+                                <span id="avgResponseTime" class="stat-value">0ms</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="request-list-container">
+                        <div class="request-list-header">
+                            <h3>Recent Requests</h3>
+                            <div class="filter-controls">
+                                <select id="statusFilter" aria-label="Filter by status">
+                                    <option value="all">All Status</option>
+                                    <option value="success">Success</option>
+                                    <option value="error">Error</option>
+                                    <option value="processing">Processing</option>
+                                </select>
+                                <select id="limitSelect" aria-label="Number of requests to show">
+                                    <option value="25">25 requests</option>
+                                    <option value="50">50 requests</option>
+                                    <option value="100" selected>100 requests</option>
+                                    <option value="200">200 requests</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div id="requestsList" class="requests-list" role="log" aria-live="polite" aria-label="API request history">
+                            <div class="loading-message">Loading request history...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <div id="status" class="status"></div>
+                    <button type="button" id="loadConfigBtn" class="btn btn-secondary">
+                        Load Current Config
+                    </button>
+                    <button type="submit" id="saveConfigBtn" class="btn btn-primary">
+                        Save Configuration
+                    </button>
+                </div>
+            </form>
+        </main>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
