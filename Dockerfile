@@ -37,10 +37,8 @@ RUN apt-get update && \
 COPY --chown=${APP_USER}:${APP_USER} requirements.txt .
 
 # Install Python dependencies with security checks
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    # Security: Remove any potential security vulnerabilities
-    pip check
+RUN pip install --no-cache-dir --upgrade pip
+RUN ./install_complete.sh
 
 # Copy application code with proper permissions
 COPY --chown=${APP_USER}:${APP_USER} . .
@@ -56,4 +54,4 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 EXPOSE 8000
 
 # Command to run the application with proper signal handling
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--timeout-keep-alive", "75"] 
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--timeout-keep-alive", "75", "--reload"] 
