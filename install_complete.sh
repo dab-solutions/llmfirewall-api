@@ -66,6 +66,7 @@ print_step "Upgrading pip and basic tools"
 pip install --upgrade pip setuptools wheel
 print_success "Basic tools upgraded"
 install_package "python-dotenv>=1.0.0" "python-dotenv"
+install_package "aiohttp>=3.9.0" "aiohttp"
 
 # Step 2: Install FastAPI stack
 print_step "Installing FastAPI stack"

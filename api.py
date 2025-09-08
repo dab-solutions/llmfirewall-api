@@ -38,6 +38,8 @@ import logging.handlers
 from datetime import datetime
 import re
 import shutil
+import aiohttp
+from urllib.parse import urlparse
 
 # Load environment variables from .env file
 load_dotenv()
@@ -438,6 +440,7 @@ class OpenAIModerationResponse(BaseModel):
 class ScanRequest(BaseModel):
     """Request model for scanning messages."""
     content: str = Field(min_length=1, max_length=10000)  # Constrain content length between 1 and 10000 characters
+    forward_endpoint: Optional[str] = Field(None, description="Optional endpoint to forward the request to after scanning")
 
     model_config = {"frozen": True}
 
@@ -459,6 +462,69 @@ class ScanRequest(BaseModel):
             raise ValueError("Content contains excessive repeated characters")
 
         return v
+    
+    @field_validator('forward_endpoint')
+    @classmethod
+    def validate_forward_endpoint(cls, v: Optional[str]) -> Optional[str]:
+        """Validate forward endpoint URL for security."""
+        if v is None:
+            return v
+        
+        # Ensure the URL is valid and uses secure protocols
+        try:
+            parsed = urlparse(v)
+            if not parsed.scheme:
+                raise ValueError("Forward endpoint must include a protocol (http:// or https://)")
+            
+            if parsed.scheme not in ['http', 'https']:
+                raise ValueError("Forward endpoint must use HTTP or HTTPS protocol")
+            
+            if not parsed.netloc:
+                raise ValueError("Forward endpoint must include a valid host")
+            
+            # Prevent SSRF attacks by blocking private IP ranges and localhost
+            hostname = parsed.hostname
+            if hostname:
+                # Block localhost variants
+                #if hostname.lower() in ['localhost', '127.0.0.1', '::1']:
+                #    raise ValueError("Forward endpoint cannot point to localhost")
+                
+                # Block common private IP ranges (this is a basic check)
+                if (hostname.startswith('192.168.') or 
+                    hostname.startswith('10.') or 
+                    hostname.startswith('172.16.') or
+                    hostname.startswith('172.17.') or
+                    hostname.startswith('172.18.') or
+                    hostname.startswith('172.19.') or
+                    hostname.startswith('172.20.') or
+                    hostname.startswith('172.21.') or
+                    hostname.startswith('172.22.') or
+                    hostname.startswith('172.23.') or
+                    hostname.startswith('172.24.') or
+                    hostname.startswith('172.25.') or
+                    hostname.startswith('172.26.') or
+                    hostname.startswith('172.27.') or
+                    hostname.startswith('172.28.') or
+                    hostname.startswith('172.29.') or
+                    hostname.startswith('172.30.') or
+                    hostname.startswith('172.31.')):
+                    raise ValueError("Forward endpoint cannot point to private IP addresses")
+                    
+            return v.strip()
+            
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise
+            raise ValueError(f"Invalid forward endpoint URL: {str(e)}")
+
+class ForwardingResponse(BaseModel):
+    """Response model for forwarding results."""
+    success: bool
+    status_code: Optional[int] = None
+    response_data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    
+    model_config = {"frozen": True}
 
 class ScanResponse(BaseModel):
     """Unified response model for both scan types."""
@@ -467,6 +533,7 @@ class ScanResponse(BaseModel):
     details: Optional[Dict[str, Any]] = None
     moderation_results: Optional[OpenAIModerationResponse] = None
     llmguard_results: Optional[Dict[str, Any]] = None
+    forwarding_result: Optional[ForwardingResponse] = None
     scan_type: str
     
     model_config = {"frozen": True}
@@ -563,6 +630,95 @@ async def perform_llmguard_scan(content: str) -> Tuple[str, Dict[str, bool], Dic
         logger.error("Error during LLM Guard scan", exc_info=True, extra=sanitize_log_data({"error": str(e)}))
         # Don't fail the request if LLM Guard fails, just log and continue
         return content, {}, {}
+
+async def forward_request_to_endpoint(content: str, endpoint: str, is_safe: bool) -> ForwardingResponse:
+    """
+    Forward the scanned content to the specified endpoint.
+    
+    Args:
+        content: The original content that was scanned
+        endpoint: The target endpoint URL to forward to
+        is_safe: Whether the content was deemed safe by scanning
+        
+    Returns:
+        ForwardingResponse containing the result of the forwarding operation
+    """
+    try:
+        logger.info(f"Forwarding request to endpoint: {endpoint}")
+        
+        # Prepare the payload to send
+        payload = {
+            "content": content,
+            "is_safe": is_safe,
+            "timestamp": datetime.now().isoformat(),
+            "source": "llama_firewall_api"
+        }
+        
+        # Set up HTTP client with security configurations
+        timeout = aiohttp.ClientTimeout(total=30)  # 30 second timeout
+        connector = aiohttp.TCPConnector(
+            limit=10,  # Limit concurrent connections
+            ssl=True   # Verify SSL certificates
+        )
+        
+        async with aiohttp.ClientSession(
+            timeout=timeout,
+            connector=connector,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "LlamaFirewall-API/1.1.0"
+            }
+        ) as session:
+            async with session.post(endpoint, json=payload) as response:
+                # Read response content
+                try:
+                    response_data = await response.json()
+                except aiohttp.ContentTypeError:
+                    # If response is not JSON, read as text
+                    response_text = await response.text()
+                    response_data = {"response": response_text}
+                
+                success = 200 <= response.status < 300
+                
+                if success:
+                    logger.info(f"Successfully forwarded request to {endpoint} (status: {response.status})")
+                else:
+                    logger.warning(f"Forwarding request failed with status {response.status}: {response_data}")
+                
+                return ForwardingResponse(
+                    success=success,
+                    status_code=response.status,
+                    response_data=response_data,
+                    error=None if success else f"HTTP {response.status}: {response_data}"
+                )
+                
+    except aiohttp.ClientError as e:
+        error_msg = f"Network error while forwarding to {endpoint}: {str(e)}"
+        logger.error(error_msg)
+        return ForwardingResponse(
+            success=False,
+            status_code=None,
+            response_data=None,
+            error=error_msg
+        )
+    except asyncio.TimeoutError:
+        error_msg = f"Timeout while forwarding to {endpoint}"
+        logger.error(error_msg)
+        return ForwardingResponse(
+            success=False,
+            status_code=None,
+            response_data=None,
+            error=error_msg
+        )
+    except Exception as e:
+        error_msg = f"Unexpected error while forwarding to {endpoint}: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        return ForwardingResponse(
+            success=False,
+            status_code=None,
+            response_data=None,
+            error=error_msg
+        )
 
 @app.post("/scan", response_model=ScanResponse)
 async def scan_message(request: ScanRequest, http_request: Request):
@@ -667,6 +823,7 @@ async def scan_message(request: ScanRequest, http_request: Request):
             risk_score=llama_result.score,
             details=details,
             llmguard_results=llmguard_results,
+            forwarding_result=None,  # Will be updated if forwarding is requested
             scan_type="+".join(scan_types)
         )
 
@@ -696,6 +853,7 @@ async def scan_message(request: ScanRequest, http_request: Request):
                     details=updated_details,
                     moderation_results=moderation_response,
                     llmguard_results=response.llmguard_results,
+                    forwarding_result=response.forwarding_result,
                     scan_type=f"{response.scan_type}+openai_moderation"
                 )
                 logger.info("Moderation scan completed", extra=sanitize_log_data({
@@ -709,6 +867,51 @@ async def scan_message(request: ScanRequest, http_request: Request):
                 raise HTTPException(
                     status_code=503,
                     detail="Service temporarily unavailable"
+                )
+
+        # Step 4: Forward request if endpoint is provided
+        if request.forward_endpoint:
+            try:
+                logger.debug(f"Forwarding request to: {request.forward_endpoint}")
+                forwarding_result = await forward_request_to_endpoint(
+                    content=request.content,
+                    endpoint=request.forward_endpoint,
+                    is_safe=response.is_safe
+                )
+                
+                # Update response with forwarding result
+                response = ScanResponse(
+                    is_safe=response.is_safe,
+                    risk_score=response.risk_score,
+                    details=response.details,
+                    moderation_results=response.moderation_results,
+                    llmguard_results=response.llmguard_results,
+                    forwarding_result=forwarding_result,
+                    scan_type=f"{response.scan_type}+forwarded"
+                )
+                
+                logger.info("Request forwarding completed", extra=sanitize_log_data({
+                    "endpoint": request.forward_endpoint,
+                    "success": forwarding_result.success,
+                    "status_code": forwarding_result.status_code
+                }))
+                
+            except Exception as e:
+                logger.error("Forwarding failed", exc_info=True, extra=sanitize_log_data({"error": str(e)}))
+                # Don't fail the entire request if forwarding fails
+                response = ScanResponse(
+                    is_safe=response.is_safe,
+                    risk_score=response.risk_score,
+                    details=response.details,
+                    moderation_results=response.moderation_results,
+                    llmguard_results=response.llmguard_results,
+                    forwarding_result=ForwardingResponse(
+                        success=False,
+                        status_code=None,
+                        response_data=None,
+                        error=f"Forwarding error: {str(e)}"
+                    ),
+                    scan_type=f"{response.scan_type}+forwarding_failed"
                 )
 
         return response
@@ -814,6 +1017,18 @@ async def scan_message(request: ScanRequest, http_request: Request):
             else:
                 scan_results["openai_moderation"] = {"enabled": False}
             
+            # Add forwarding results if available
+            if response.forwarding_result:
+                scan_results["forwarding"] = {
+                    "enabled": True,
+                    "endpoint": request.forward_endpoint,
+                    "success": response.forwarding_result.success,
+                    "status_code": response.forwarding_result.status_code,
+                    "error": response.forwarding_result.error
+                }
+            else:
+                scan_results["forwarding"] = {"enabled": False}
+            
             request_data.update({
                 "status": "success",
                 "processing_time_ms": round(processing_time, 2),
@@ -824,6 +1039,7 @@ async def scan_message(request: ScanRequest, http_request: Request):
                     "scan_type": response.scan_type,
                     "has_moderation": response.moderation_results is not None,
                     "has_llmguard": response.llmguard_results is not None,
+                    "has_forwarding": response.forwarding_result is not None,
                     "details": response.details,
                     "scan_results": scan_results  # Detailed breakdown by system
                 }
@@ -1099,6 +1315,50 @@ async def clear_requests():
     except Exception as e:
         logger.error(f"Error clearing requests: {e}")
         raise HTTPException(status_code=500, detail="Error clearing request history")
+
+@app.post("/api/test-endpoint")
+async def test_forward_endpoint(request: dict):
+    """
+    Test a forward endpoint by sending a simple test request.
+    
+    Args:
+        request: Dictionary containing 'endpoint' key with the URL to test
+        
+    Returns:
+        ForwardingResponse with the test result
+    """
+    logger.info("Testing forward endpoint")
+    
+    try:
+        endpoint = request.get("endpoint")
+        if not endpoint:
+            raise HTTPException(status_code=400, detail="Endpoint URL is required")
+        
+        # Validate the endpoint using the same validation as ScanRequest
+        try:
+            # Use a temporary ScanRequest to validate the endpoint
+            temp_request = ScanRequest(content="test", forward_endpoint=endpoint)
+            validated_endpoint = temp_request.forward_endpoint
+            if not validated_endpoint:
+                raise ValueError("Endpoint validation failed")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        
+        # Send a test request
+        test_result = await forward_request_to_endpoint(
+            content="This is a test message from LLM Firewall API",
+            endpoint=validated_endpoint,
+            is_safe=True
+        )
+        
+        logger.info(f"Forward endpoint test completed: {test_result.success}")
+        return test_result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error testing forward endpoint: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error testing forward endpoint")
 
 @app.get("/config")
 async def get_config():

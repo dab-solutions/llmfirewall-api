@@ -14,6 +14,7 @@ class ConfigUI {
      * Initialize the configuration UI
      */
     init() {
+        console.log('ConfigUI initializing...'); // Debug log
         this.setupTabNavigation();
         this.setupFormHandlers();
         this.setupRangeInputs();
@@ -25,6 +26,111 @@ class ConfigUI {
         
         // Warn user about unsaved changes
         window.addEventListener('beforeunload', this.handleBeforeUnload.bind(this));
+        
+        // Set up endpoint testing button - do this here to ensure method is available
+        const testEndpointBtn = document.getElementById('testEndpointBtn');
+        if (testEndpointBtn) {
+            
+            testEndpointBtn.addEventListener('click', async function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('Test endpoint button clicked directly'); // Debug log
+                
+                // HELPER FUNCTION: Display test results directly without relying on class method
+                function showTestResult(success, message, details) {
+                    console.log('Showing test result:', { success, message, details }); // Debug log
+                    
+                    const resultDiv = document.getElementById('endpointTestResult');
+                    if (!resultDiv) {
+                        console.error('endpointTestResult element not found');
+                        return;
+                    }
+
+                    resultDiv.className = `test-result ${success ? 'success' : 'error'}`;
+                    
+                    let html = `<h4>${success ? '✓ Test Successful' : '✗ Test Failed'}</h4>`;
+                    html += `<p>${message}</p>`;
+                    
+                    if (details) {
+                        if (details.status_code) {
+                            html += `<p><strong>Status Code:</strong> ${details.status_code}</p>`;
+                        }
+                        
+                        if (details.response_data && typeof details.response_data === 'object') {
+                            html += `<p><strong>Response:</strong></p>`;
+                            html += `<pre>${JSON.stringify(details.response_data, null, 2)}</pre>`;
+                        }
+                    }
+                    
+                    resultDiv.innerHTML = html;
+                    resultDiv.style.display = 'block';
+                    
+                    // Announce to screen readers if available
+                    if (typeof announceToScreenReader === 'function') {
+                        announceToScreenReader(success ? 'Endpoint test successful' : 'Endpoint test failed');
+                    }
+                }
+                
+                try {
+                    const endpointInput = document.getElementById('forwardEndpoint');
+                    const testBtn = document.getElementById('testEndpointBtn');
+                    const resultDiv = document.getElementById('endpointTestResult');
+                    
+                    if (!endpointInput || !testBtn || !resultDiv) {
+                        console.error('Required elements not found for endpoint testing');
+                        return;
+                    }
+                    
+                    const endpoint = endpointInput.value.trim();
+                    console.log('Endpoint to test:', endpoint); // Debug log
+                    
+                    if (!endpoint) {
+                        showTestResult(false, 'Please enter an endpoint URL to test', null);
+                        return;
+                    }
+                    
+                    // Update UI state
+                    testBtn.disabled = true;
+                    testBtn.classList.add('loading');
+                    testBtn.textContent = 'Testing...';
+                    resultDiv.style.display = 'none';
+                    
+                    console.log('Sending test request to /api/test-endpoint'); // Debug log
+                    
+                    // Send test request
+                    const response = await fetch('/api/test-endpoint', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ endpoint: endpoint })
+                    });
+                    
+                    console.log('Response received:', response.status, response.statusText); // Debug log
+                    
+                    const result = await response.json();
+                    console.log('Response data:', result); // Debug log
+                    
+                    if (response.ok) {
+                        showTestResult(result.success, result.error || 'Test completed', result);
+                    } else {
+                        showTestResult(false, result.detail || 'Test failed', null);
+                    }
+                } catch (error) {
+                    console.error('Error testing endpoint:', error);
+                    showTestResult(false, `Network error: ${error.message}`, null);
+                } finally {
+                    const testBtn = document.getElementById('testEndpointBtn');
+                    if (testBtn) {
+                        testBtn.disabled = false;
+                        testBtn.classList.remove('loading');
+                        testBtn.textContent = 'Test Endpoint';
+                    }
+                }
+            });
+        }
+        
+        console.log('ConfigUI initialization complete'); // Debug log
     }
 
     /**
@@ -130,6 +236,10 @@ class ConfigUI {
             loadBtn.addEventListener('click', this.loadConfiguration.bind(this));
         }
 
+        // Set up endpoint testing
+        // NOTE: This is now handled in the init method to ensure method is available
+        // Leaving this comment for reference
+
         // Set up API key field handlers to detect changes from masked values
         const apiKeyElements = ['hfToken', 'togetherApiKey', 'openaiApiKey'];
         apiKeyElements.forEach(elementId => {
@@ -151,14 +261,12 @@ class ConfigUI {
                                                             elementId === 'togetherApiKey' ? 'Together AI API key' : 
                                                             'OpenAI API key'}`;
                         e.target.dataset.hasRealValue = "true";
-                        console.log(`DEBUG: ${elementId} changed from masked value to real input`);
                     } else if (isMasked && currentValue.includes('•') && currentValue !== '••••••••••••••••••••') {
                         // User is typing in masked field, clear the bullets and keep their input
                         const cleanValue = currentValue.replace(/•/g, '');
                         e.target.value = cleanValue;
                         e.target.style.color = '';
                         e.target.dataset.hasRealValue = "true";
-                        console.log(`DEBUG: ${elementId} cleared mask, keeping user input: "${cleanValue}"`);
                     }
                     
                     previousValue = e.target.value;
@@ -175,7 +283,6 @@ class ConfigUI {
                         e.target.dataset.hasRealValue = "false";
                         e.target.placeholder = '';
                         previousValue = e.target.value;
-                        console.log(`DEBUG: ${elementId} restored to masked value`);
                     }
                 });
                 
@@ -414,7 +521,6 @@ class ConfigUI {
         });
         
         if (hfToken) {
-            console.log('DEBUG: HF_TOKEN value:', config.HF_TOKEN);
             if (config.HF_TOKEN && config.HF_TOKEN !== '[REDACTED]') {
                 hfToken.value = config.HF_TOKEN;
                 hfToken.placeholder = '';
@@ -441,7 +547,6 @@ class ConfigUI {
             }
         }
         if (togetherApiKey) {
-            console.log('DEBUG: TOGETHER_API_KEY value:', config.TOGETHER_API_KEY);
             if (config.TOGETHER_API_KEY && config.TOGETHER_API_KEY !== '[REDACTED]') {
                 togetherApiKey.value = config.TOGETHER_API_KEY;
                 togetherApiKey.placeholder = '';
@@ -468,7 +573,6 @@ class ConfigUI {
             }
         }
         if (openaiApiKey) {
-            console.log('DEBUG: OPENAI_API_KEY value:', config.OPENAI_API_KEY);
             if (config.OPENAI_API_KEY && config.OPENAI_API_KEY !== '[REDACTED]') {
                 openaiApiKey.value = config.OPENAI_API_KEY;
                 openaiApiKey.placeholder = '';
@@ -636,9 +740,7 @@ class ConfigUI {
      * Update status message
      */
     updateStatus(message, type = 'info') {
-        console.log('DEBUG: updateStatus called with:', { message, type });
         const statusElement = document.getElementById('status');
-        console.log('DEBUG: Status element found:', !!statusElement);
         if (!statusElement) {
             console.log('DEBUG: Status element not found!');
             // Try to create the element if it doesn't exist
@@ -660,7 +762,6 @@ class ConfigUI {
         statusElement.setAttribute('role', type === 'error' ? 'alert' : 'status');
         statusElement.style.display = 'flex'; // Force visibility
         statusElement.style.minHeight = '2.5rem'; // Ensure it has height
-        console.log('DEBUG: Status updated successfully. Current HTML:', statusElement.outerHTML);
 
         // Auto-clear success messages
         if (type === 'success') {
@@ -800,6 +901,40 @@ class RequestMonitor {
         } finally {
             this.updateLoadingState(false);
         }
+    }
+
+    /**
+     * Show the result of the endpoint test
+     */
+    showEndpointTestResult(success, message, details) {
+        
+        const resultDiv = document.getElementById('endpointTestResult');
+        if (!resultDiv) {
+            console.error('endpointTestResult element not found');
+            return;
+        }
+
+        resultDiv.className = `test-result ${success ? 'success' : 'error'}`;
+        
+        let html = `<h4>${success ? '✓ Test Successful' : '✗ Test Failed'}</h4>`;
+        html += `<p>${message}</p>`;
+        
+        if (details) {
+            if (details.status_code) {
+                html += `<p><strong>Status Code:</strong> ${details.status_code}</p>`;
+            }
+            
+            if (details.response_data && typeof details.response_data === 'object') {
+                html += `<p><strong>Response:</strong></p>`;
+                html += `<pre>${JSON.stringify(details.response_data, null, 2)}</pre>`;
+            }
+        }
+        
+        resultDiv.innerHTML = html;
+        resultDiv.style.display = 'block';
+        
+        // Announce to screen readers
+        announceToScreenReader(success ? 'Endpoint test successful' : 'Endpoint test failed');
     }
 
     /**
@@ -1038,6 +1173,44 @@ class RequestMonitor {
                     </div>
                 `;
             }
+        }
+        
+        // Forwarding Results - only show if forwarding was attempted
+        if (scanResults.forwarding && scanResults.forwarding.enabled) {
+            const forward = scanResults.forwarding;
+            html += `
+                <div class="scan-system">
+                    <h6>🔗 Request Forwarding</h6>
+                    <div class="system-details">
+                        <div class="detail-item">
+                            <span class="detail-label">Endpoint:</span>
+                            <span class="detail-value">${this.escapeHtml(forward.endpoint || 'N/A')}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Status:</span>
+                            <span class="detail-value ${forward.success ? 'safe' : 'unsafe'}">${forward.success ? 'Success' : 'Failed'}</span>
+                        </div>
+            `;
+            
+            if (forward.status_code) {
+                html += `
+                    <div class="detail-item">
+                        <span class="detail-label">HTTP Status:</span>
+                        <span class="detail-value">${forward.status_code}</span>
+                    </div>
+                `;
+            }
+            
+            if (forward.error) {
+                html += `
+                    <div class="detail-item">
+                        <span class="detail-label">Error:</span>
+                        <span class="detail-value failed">${this.escapeHtml(forward.error)}</span>
+                    </div>
+                `;
+            }
+            
+            html += '</div></div>';
         }
         
         html += '</div>';
@@ -1289,9 +1462,25 @@ manageFocus();
 
 // Initialize the application when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('Initializing LLM Firewall UI...');
+    console.log('DOM loaded, initializing LLM Firewall UI...');
     
     const configUI = new ConfigUI();
+    
+    // Additional check for the test button after initialization
+    setTimeout(() => {
+        const testBtn = document.getElementById('testEndpointBtn');
+        console.log('Post-init button check:', testBtn);
+        if (testBtn) {
+            console.log('Button disabled state:', testBtn.disabled);
+            console.log('Button classes:', testBtn.className);
+            console.log('Button text:', testBtn.textContent);
+            
+            // Test if the click event is working
+            testBtn.addEventListener('click', () => {
+                console.log('Direct click listener triggered!');
+            });
+        }
+    }, 1000);
     
     // Initialize monitoring if the monitoring tab is present
     const monitoringPanel = document.getElementById('panel-monitoring');

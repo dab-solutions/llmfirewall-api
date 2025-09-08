@@ -85,6 +85,16 @@
                 >
                     Monitoring
                 </button>
+                <button 
+                    class="tab-button" 
+                    id="tab-forwarding" 
+                    role="tab" 
+                    aria-selected="false" 
+                    aria-controls="panel-forwarding"
+                    tabindex="-1"
+                >
+                    Forwarding
+                </button>
             </div>
 
             <form id="configForm" novalidate>
@@ -552,6 +562,79 @@
                         <div id="requestsList" class="requests-list" role="log" aria-live="polite" aria-label="API request history">
                             <div class="loading-message">Loading request history...</div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Forwarding Configuration -->
+                <div class="tab-panel" id="panel-forwarding" role="tabpanel" aria-labelledby="tab-forwarding">
+                    <h2>Request Forwarding</h2>
+                    <p class="description">
+                        Configure request forwarding to automatically send scanned content to external endpoints.
+                        This feature allows you to integrate the firewall with downstream services.
+                    </p>
+                    
+                    <div class="form-group">
+                        <label for="forwardEndpoint">
+                            Forward Endpoint URL
+                            <span class="optional">(Test Only)</span>
+                        </label>
+                        <div class="input-group">
+                            <input 
+                                type="url" 
+                                id="forwardEndpoint" 
+                                placeholder="https://api.example.com/webhook"
+                                aria-describedby="forwardEndpoint-help"
+                                class="endpoint-input"
+                            >
+                            <button 
+                                type="button" 
+                                id="testEndpointBtn" 
+                                class="btn btn-secondary"
+                                aria-describedby="testEndpoint-help"
+                            >
+                                Test Endpoint
+                            </button>
+                        </div>
+                        <div class="help-text" id="forwardEndpoint-help">
+                            Enter a URL to test the forwarding functionality. The endpoint will receive a POST request with the scanned content and security assessment.
+                        </div>
+                        <div class="help-text" id="testEndpoint-help">
+                            Test the endpoint by sending a sample request to verify connectivity and response.
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <div class="info-box">
+                            <h3>Forward Request Format</h3>
+                            <p>When forwarding is enabled, the target endpoint will receive a POST request with the following JSON payload:</p>
+                            <pre><code>{
+  "content": "The original message content",
+  "is_safe": true,
+  "timestamp": "2024-01-15T10:30:00",
+  "source": "llama_firewall_api"
+}</code></pre>
+                            <p><strong>Headers:</strong></p>
+                            <ul>
+                                <li><code>Content-Type: application/json</code></li>
+                                <li><code>User-Agent: LlamaFirewall-API/1.1.0</code></li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <div class="info-box">
+                            <h3>Security Considerations</h3>
+                            <ul>
+                                <li>Only HTTPS and HTTP protocols are allowed</li>
+                                <li>Localhost and private IP addresses are blocked to prevent SSRF attacks</li>
+                                <li>Request timeout is set to 30 seconds</li>
+                                <li>SSL certificates are verified for HTTPS endpoints</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div id="endpointTestResult" class="test-result" style="display: none;">
+                        <!-- Test results will be displayed here -->
                     </div>
                 </div>
 
