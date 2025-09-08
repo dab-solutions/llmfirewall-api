@@ -489,7 +489,7 @@ for req in monitoring['requests']:
                 status = 'PASS' if passed else 'FAIL'
                 score = guard.get('risk_scores', {}).get(scanner, 'N/A')
                 print(f"    - {scanner}: {status} ({score})")
-```
+
 print("OpenAI moderation enabled:", config["openai_moderation"]["enabled"])
 ```
 
