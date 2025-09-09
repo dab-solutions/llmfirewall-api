@@ -30,7 +30,16 @@ Make sure to ask for access to the relevant models here: https://huggingface.co/
 - **Request history** with comprehensive metadata and performance metrics
 - **Visual status indicators** for quick assessment of security events
 
-### 🛡️ Three-Layer Security Architecture
+### � Advanced Configuration Management
+- **Database-backed endpoint storage** with SQLite (extensible to other databases)
+- **Automatic request forwarding** to configured endpoints
+- **Flexible endpoint configurations** with custom headers, timeouts, and security settings
+- **Built-in endpoint testing** and validation
+- **RESTful configuration API** with full CRUD operations
+- **Tag-based organization** for environment and purpose separation
+- **SSRF protection** and comprehensive input validation
+
+### �🛡️ Three-Layer Security Architecture
 - **LlamaFirewall**: Primary protection against prompt injection attacks
 - **LLM Guard**: Advanced content analysis with multiple specialized scanners
 - **OpenAI Moderation**: Commercial content moderation service
@@ -263,7 +272,7 @@ Once the server is running, you can access:
 Web-based configuration panel for managing all settings through a user-friendly interface.
 
 ### POST /scan
-Scan a message for potential security risks using the configured scanners.
+Scan a message for potential security risks using the configured scanners. The API automatically forwards requests to any endpoint configurations that have `forwarding_enabled=true`.
 
 Request body:
 ```json
@@ -377,6 +386,64 @@ Response includes:
 ### POST /api/requests/clear
 Clear all tracked request history.
 
+### Configuration Management Endpoints
+
+#### POST /api/configurations
+Create a new endpoint configuration that can be used for automatic request forwarding.
+
+Request body:
+```json
+{
+    "name": "my-webhook",
+    "description": "Production webhook endpoint",
+    "config_type": "endpoint",
+    "config_data": {
+        "url": "https://api.example.com/webhook",
+        "headers": {
+            "Authorization": "Bearer your-token",
+            "X-Source": "llm-firewall"
+        },
+        "timeout": 30,
+        "method": "POST",
+        "forwarding_enabled": true,
+        "forward_on_unsafe": false,
+        "include_scan_results": true
+    },
+    "tags": ["production", "webhook"]
+}
+```
+
+#### GET /api/configurations
+List all stored configurations with optional filtering by type.
+
+#### GET /api/configurations/{id}
+Get a specific configuration by ID.
+
+#### GET /api/configurations/by-name/{name}
+Get a specific configuration by name.
+
+#### PUT /api/configurations/{id}
+Update an existing configuration.
+
+#### DELETE /api/configurations/{id}
+Delete a configuration.
+
+#### GET /api/endpoint-configurations
+List all endpoint configurations (filtered view of configurations).
+
+#### POST /api/endpoint-configurations/test/{config_name}
+Test an endpoint configuration by sending a test request.
+
+### POST /api/test-endpoint
+Test a direct endpoint URL for connectivity and response validation.
+
+Request body:
+```json
+{
+    "endpoint": "https://webhook.site/your-unique-id"
+}
+```
+
 ### GET /health
 Health check endpoint for monitoring service availability.
 
@@ -393,6 +460,7 @@ http://localhost:8000/
 # - API Keys: Manage HuggingFace, Together AI, and OpenAI tokens
 # - LlamaFirewall: Configure primary security scanners
 # - LLM Guard: Set up advanced content analysis
+# - Forwarding: Create and manage endpoint configurations for automatic forwarding
 # - Advanced: Fine-tune tokenizer and processing settings
 # - Monitoring: View real-time request tracking and analysis
 ```
@@ -407,6 +475,37 @@ curl -X POST "http://localhost:8000/api/requests/clear"
 
 # Check service health
 curl "http://localhost:8000/health"
+```
+
+### 🔧 Configuration Management Examples
+```bash
+# Create an endpoint configuration
+curl -X POST "http://localhost:8000/api/configurations" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "name": "production-webhook",
+       "description": "Production webhook for scan results",
+       "config_type": "endpoint",
+       "config_data": {
+         "url": "https://api.example.com/webhook",
+         "headers": {"Authorization": "Bearer your-token"},
+         "forwarding_enabled": true,
+         "forward_on_unsafe": false,
+         "include_scan_results": true
+       },
+       "tags": ["production"]
+     }'
+
+# List all endpoint configurations
+curl "http://localhost:8000/api/endpoint-configurations"
+
+# Test an endpoint configuration
+curl -X POST "http://localhost:8000/api/endpoint-configurations/test/production-webhook"
+
+# Test a direct endpoint
+curl -X POST "http://localhost:8000/api/test-endpoint" \
+     -H "Content-Type: application/json" \
+     -d '{"endpoint": "https://webhook.site/your-unique-id"}'
 ```
 
 ### 📡 Command Line Interface
@@ -439,6 +538,8 @@ curl "http://localhost:8000/config"
 curl "http://localhost:8000/api/env-config"
 ```
 
+**Note**: Requests are automatically forwarded to any endpoint configurations with `forwarding_enabled=true`. Configure forwarding endpoints through the web interface or the `/api/configurations` endpoint.
+
 ### 🐍 Python SDK
 Using Python requests:
 ```python
@@ -448,7 +549,29 @@ import time
 # Base URL for the API
 BASE_URL = "http://localhost:8000"
 
-# Scan a message with all security layers
+# 1. Create an endpoint configuration for automatic forwarding
+endpoint_config = {
+    "name": "my-webhook",
+    "description": "My webhook endpoint",
+    "config_type": "endpoint",
+    "config_data": {
+        "url": "https://webhook.site/your-unique-id",
+        "headers": {
+            "Authorization": "Bearer your-token",
+            "X-Source": "llm-firewall"
+        },
+        "forwarding_enabled": True,  # Enable automatic forwarding
+        "forward_on_unsafe": False,  # Only forward safe content
+        "include_scan_results": True
+    },
+    "tags": ["webhook", "production"]
+}
+
+# Create the configuration
+response = requests.post(f"{BASE_URL}/api/configurations", json=endpoint_config)
+print(f"Configuration created: {response.json()}")
+
+# 2. Scan a message (will automatically forward to enabled endpoints)
 response = requests.post(
     f"{BASE_URL}/scan",
     json={"content": "What is the weather like tomorrow?"}
@@ -459,13 +582,18 @@ print(f"Is safe: {result['is_safe']}")
 print(f"Risk score: {result['risk_score']}")
 print(f"Scan type: {result['scan_type']}")
 
-# Check current configuration
+# Check if forwarding occurred
+if result.get('forwarding_result'):
+    print(f"Forwarding success: {result['forwarding_result']['success']}")
+    print(f"Forwarding status: {result['forwarding_result']['status_code']}")
+
+# 3. Check current configuration
 config = requests.get(f"{BASE_URL}/config").json()
 print("LlamaFirewall scanners:", config["llamafirewall"]["scanners"])
 print("LLM Guard enabled:", config["llmguard"]["enabled"])
 print("OpenAI moderation enabled:", config["openai_moderation"]["enabled"])
 
-# Monitor recent requests with detailed analysis
+# 4. Monitor recent requests with detailed analysis
 monitoring = requests.get(f"{BASE_URL}/api/requests?limit=5").json()
 print(f"\nRecent requests: {monitoring['total']}")
 
@@ -489,8 +617,15 @@ for req in monitoring['requests']:
                 status = 'PASS' if passed else 'FAIL'
                 score = guard.get('risk_scores', {}).get(scanner, 'N/A')
                 print(f"    - {scanner}: {status} ({score})")
+        
+        if 'forwarding' in scan_results:
+            fwd = scan_results['forwarding']
+            if fwd['enabled']:
+                print(f"  📤 Forwarding: {fwd['endpoint']} ({'SUCCESS' if fwd['success'] else 'FAILED'})")
 
-print("OpenAI moderation enabled:", config["openai_moderation"]["enabled"])
+# 5. Test endpoint configurations
+endpoint_test = requests.post(f"{BASE_URL}/api/endpoint-configurations/test/my-webhook")
+print(f"\nEndpoint test result: {endpoint_test.json()}")
 ```
 
 ## Advanced Features
@@ -525,7 +660,7 @@ The web interface includes a comprehensive monitoring section that provides:
 
 ## Current Status
 
-✅ **Production-Ready with Advanced Features** - The LLM Firewall API includes:
+✅ **Production-Ready with Advanced Configuration Management** - The LLM Firewall API includes:
 
 ### Core Security Features
 - **Multi-layer security** with LlamaFirewall, LLM Guard, and OpenAI Moderation
@@ -533,7 +668,15 @@ The web interface includes a comprehensive monitoring section that provides:
 - **Real-time threat analysis** with detailed explanations of security decisions
 - **Configurable thresholds** and custom scanning patterns
 
-### Advanced Web Interface
+### Advanced Configuration System
+- **Database-backed endpoint configurations** with SQLite storage (extensible to other databases)
+- **Automatic request forwarding** to configured endpoints with `forwarding_enabled=true`
+- **Flexible endpoint management** with custom headers, timeouts, and security settings
+- **Web-based configuration interface** in the Forwarding tab
+- **RESTful configuration API** with full CRUD operations
+- **Built-in endpoint testing** and validation
+
+### Production-Ready Web Interface
 - **Professional configuration panel** with tabbed interface and accessibility features
 - **Real-time monitoring dashboard** showing detailed scan results by security system
 - **Secure credential management** with masked API keys and smart save logic
@@ -546,12 +689,13 @@ The web interface includes a comprehensive monitoring section that provides:
 - **Dynamic configuration updates** without server restart
 - **Structured logging** with configurable levels and rotation
 - **Performance optimization** with thread pools and async processing
-- **Security hardening** with non-root containers and input validation
+- **Security hardening** with non-root containers and SSRF protection
 
 ### Monitoring & Analytics
 - **Request tracking** with full audit trail of all security decisions
 - **Performance metrics** including processing times and success rates
 - **Detailed scan breakdowns** showing contribution of each security layer
 - **Historical analysis** with filtering and search capabilities
+- **Forwarding status monitoring** with success/failure tracking
 
-The API successfully processes requests and provides detailed security analysis across all configured scanners, with full transparency into how security decisions are made.
+The API successfully processes requests and provides comprehensive security analysis across all configured scanners, with automatic forwarding to configured endpoints and full transparency into how security decisions are made.
