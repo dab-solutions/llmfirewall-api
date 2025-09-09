@@ -292,7 +292,7 @@ class ConfigurationManager:
         async with self.get_session() as session:
             from sqlalchemy import select, and_
 
-            conditions = [ConfigurationEntry.name == name, ConfigurationEntry.is_active == True]
+            conditions = [ConfigurationEntry.name == name]
             if config_type:
                 conditions.append(ConfigurationEntry.config_type == config_type)
 
@@ -414,7 +414,7 @@ class ConfigurationManager:
 
     async def delete_configuration(self, config_id: str) -> bool:
         """
-        Delete a configuration (soft delete by setting is_active=False).
+        Delete a configuration (permanently removes from database).
 
         Args:
             config_id: Configuration ID
@@ -422,7 +422,26 @@ class ConfigurationManager:
         Returns:
             True if deleted successfully, False if not found
         """
-        return await self.update_configuration(config_id, {"is_active": False})
+        async with self.get_session() as session:
+            from sqlalchemy import select, delete
+
+            # Check if configuration exists
+            result = await session.execute(
+                select(ConfigurationEntry).where(ConfigurationEntry.id == config_id)
+            )
+            config_entry = result.scalar_one_or_none()
+
+            if not config_entry:
+                return False
+
+            # Delete the entry permanently
+            await session.execute(
+                delete(ConfigurationEntry).where(ConfigurationEntry.id == config_id)
+            )
+            await session.commit()
+
+            logger.info(f"Permanently deleted configuration: {config_id}")
+            return True
 
     async def get_endpoint_configuration(self, name: str) -> Optional[EndpointConfiguration]:
         """

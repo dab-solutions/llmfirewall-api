@@ -796,7 +796,7 @@ class ConfigUI {
         try {
             configsList.innerHTML = '<div class="loading-message">Loading configurations...</div>';
 
-            const response = await fetch('/api/configurations');
+            const response = await fetch('/api/configurations?active_only=false');
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
@@ -863,6 +863,13 @@ class ConfigUI {
                                 data-config-name="${config.name}" title="Test configuration">
                             🧪 Test
                         </button>
+                        <button type="button" class="btn btn-secondary btn-small toggle-config-btn" 
+                                data-config-id="${config.id}" data-config-name="${config.name}" 
+                                data-is-active="${config.is_active}" 
+                                aria-label="${config.is_active ? 'Deactivate' : 'Activate'} configuration ${config.name}"
+                                title="${config.is_active ? 'Deactivate' : 'Activate'} configuration">
+                            ${config.is_active ? '⏸️ Deactivate' : '▶️ Activate'}
+                        </button>
                         <button type="button" class="btn btn-secondary btn-small edit-config-btn" 
                                 data-config-name="${config.name}" title="Edit configuration">
                             ✏️ Edit
@@ -898,6 +905,16 @@ class ConfigUI {
             btn.addEventListener('click', (e) => {
                 const configName = e.target.dataset.configName;
                 this.testConfigurationByName(configName);
+            });
+        });
+
+        // Toggle configuration active status buttons
+        document.querySelectorAll('.toggle-config-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const configId = e.target.dataset.configId;
+                const configName = e.target.dataset.configName;
+                const isActive = e.target.dataset.isActive === 'true';
+                this.toggleConfigurationStatus(configId, configName, isActive);
             });
         });
 
@@ -1290,7 +1307,7 @@ class ConfigUI {
             const configResponse = await response.json();
             
             // Get the full configuration record
-            const configsResponse = await fetch('/api/configurations');
+            const configsResponse = await fetch('/api/configurations?active_only=false');
             const allConfigsData = await configsResponse.json();
             const allConfigs = allConfigsData.configurations || [];
             const config = allConfigs.find(c => c.name === configName);
@@ -1331,6 +1348,43 @@ class ConfigUI {
         } catch (error) {
             console.error('Error deleting configuration:', error);
             this.updateStatus(`Error deleting configuration: ${error.message}`, 'error');
+        }
+    }
+
+    /**
+     * Toggle configuration active status
+     */
+    async toggleConfigurationStatus(configId, configName, currentlyActive) {
+        const newStatus = !currentlyActive;
+        const action = newStatus ? 'activate' : 'deactivate';
+        
+        try {
+            const response = await fetch(`/api/configurations/${configId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    is_active: newStatus
+                })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || `Failed to ${action} configuration`);
+            }
+
+            // Reload configurations to reflect the change
+            this.loadConfigurations();
+            this.updateStatus(`Configuration "${configName}" ${action}d successfully`, 'success');
+            
+            // Announce the change to screen readers
+            const statusText = newStatus ? 'activated' : 'deactivated';
+            announceToScreenReader(`Configuration ${configName} ${statusText}`);
+
+        } catch (error) {
+            console.error(`Error ${action}ing configuration:`, error);
+            this.updateStatus(`Error ${action}ing configuration: ${error.message}`, 'error');
         }
     }
 }
