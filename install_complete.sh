@@ -67,7 +67,10 @@ pip install --upgrade pip setuptools wheel
 print_success "Basic tools upgraded"
 install_package "python-dotenv>=1.0.0" "python-dotenv"
 install_package "aiohttp>=3.9.0" "aiohttp"
+install_package "sqlalchemy>=2.0.0" "SQLAlchemy"
+install_package "aiosqlite>=0.19.0" "aiosqlite"
 install_package "aiofiles>=24.1.0" "aiofiles"
+install_package "greenlet>=3.0.0" "greenlet"
 
 # Step 2: Install FastAPI stack
 print_step "Installing FastAPI stack"
