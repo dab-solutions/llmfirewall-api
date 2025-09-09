@@ -103,6 +103,9 @@ coverage.xml
 # pyenv
 .python-version
 
+# local db
+*.db
+
 # mypy
 .mypy_cache/
 .dmypy.json
@@ -135,4 +138,4 @@ cython_debug/
 
 # Keep template files
 !.env.template
-!docker-compose.template.yml 
+!docker-compose.template.yml
