@@ -216,6 +216,13 @@ moderation = False
 LLMGUARD_ENABLED = False
 LLMGUARD_SCANNERS = []
 LLMGUARD_CONFIG = {}
+SCANNER_CONFIG = {}
+llamafirewall = None
+async_client = None
+
+# Configuration reload tracking
+config_reload_in_progress = False
+config_reload_last_status = "ready"
 
 async def get_forwarding_enabled_endpoints():
     """
@@ -396,6 +403,80 @@ def parse_scanners_config() -> Dict[Role, List[ScannerType]]:
     logger.info("Scanner configuration loaded successfully")
     return scanners if scanners else default_config
 
+async def reload_configuration():
+    """
+    Reload application configuration from environment variables.
+    This function updates all global configuration variables dynamically.
+    """
+    global moderation, LLMGUARD_ENABLED, LLMGUARD_SCANNERS, LLMGUARD_CONFIG
+    global SCANNER_CONFIG, llamafirewall, async_client
+    global config_reload_in_progress, config_reload_last_status
+
+    if config_reload_in_progress:
+        logger.warning("Configuration reload already in progress")
+        return {"status": "already_in_progress", "message": "Configuration reload already in progress"}
+
+    config_reload_in_progress = True
+    config_reload_last_status = "reloading"
+
+    try:
+        logger.info("Starting configuration reload")
+
+        # Reload environment variables from .env file
+        load_dotenv(override=True)
+
+        # Update log level if changed
+        new_log_level = os.getenv("LOG_LEVEL", "INFO")
+        update_log_level(new_log_level)
+
+        # Parse scanner configuration
+        logger.info("Reloading scanner configuration")
+        SCANNER_CONFIG = parse_scanners_config()
+
+        # Reinitialize LlamaFirewall with new config
+        logger.info("Reinitializing LlamaFirewall")
+        llamafirewall = LlamaFirewall(scanners=SCANNER_CONFIG)
+
+        # Parse and update LLM Guard configuration
+        logger.info("Reloading LLM Guard configuration")
+        LLMGUARD_ENABLED, LLMGUARD_SCANNERS, LLMGUARD_CONFIG = parse_llmguard_config()
+        if LLMGUARD_ENABLED:
+            logger.info(f"LLM Guard enabled with {len(LLMGUARD_SCANNERS)} scanners")
+        else:
+            logger.info("LLM Guard disabled")
+
+        # Update OpenAI client if moderation settings changed
+        if moderation:
+            logger.info("Initializing OpenAI client for moderation")
+            async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+        else:
+            logger.info("OpenAI moderation disabled")
+            async_client = None
+
+        config_reload_last_status = "success"
+        logger.info("Configuration reload completed successfully")
+
+        return {
+            "status": "success", 
+            "message": "Configuration reloaded successfully",
+            "details": {
+                "scanner_config": len(SCANNER_CONFIG),
+                "llmguard_enabled": LLMGUARD_ENABLED,
+                "llmguard_scanners": len(LLMGUARD_SCANNERS) if LLMGUARD_SCANNERS else 0,
+                "moderation_enabled": moderation
+            }
+        }
+
+    except Exception as e:
+        config_reload_last_status = f"error: {str(e)}"
+        logger.error(f"Failed to reload configuration: {e}", exc_info=True)
+        return {
+            "status": "error", 
+            "message": f"Failed to reload configuration: {str(e)}"
+        }
+    finally:
+        config_reload_in_progress = False
+
 # Initialize application with proper error handling
 try:
     # Cache scanner configuration at startup
@@ -420,6 +501,8 @@ try:
         async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
     else:
         async_client = None
+
+    config_reload_last_status = "initialized"
 
 except ValueError as e:
     logger.error(f"Failed to initialize application: {e}", extra=sanitize_log_data({"error": str(e)}))
@@ -797,9 +880,17 @@ async def scan_message(request: ScanRequest, http_request: Request):
 
         try:
             # Use thread pool for LlamaFirewall scan
+            if llamafirewall is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="LlamaFirewall not initialized. Please reload configuration."
+                )
+
+            # Now we know llamafirewall is not None
+            firewall_instance = llamafirewall
             llama_result = await asyncio.get_event_loop().run_in_executor(
                 thread_pool,
-                lambda: llamafirewall.scan(message)
+                lambda: firewall_instance.scan(message)
             )
         except Exception as e:
             logger.error("LlamaFirewall scan failed", exc_info=True, extra=sanitize_log_data({"error": str(e)}))
@@ -1322,7 +1413,7 @@ async def update_env_config(request: ConfigUpdateRequest):
         logger.info("Environment configuration updated successfully")
         return ConfigResponse(
             success=True,
-            message="Configuration updated successfully. Restart the application to apply changes.",
+            message="Configuration updated successfully. Use /api/reload-config to apply changes immediately.",
             config=None  # Don't return the full config for security
         )
 
@@ -1344,6 +1435,30 @@ async def health_check():
     """Health check endpoint to verify the API is running."""
     logger.debug("Health check requested")
     return {"status": "healthy"}
+
+@app.post("/api/reload-config")
+async def reload_config():
+    """Reload application configuration from environment variables."""
+    logger.info("Configuration reload requested")
+    try:
+        result = await reload_configuration()
+        return result
+    except Exception as e:
+        logger.error(f"Error during configuration reload: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error reloading configuration: {str(e)}"
+        )
+
+@app.get("/api/reload-config/status")
+async def get_reload_status():
+    """Get the current status of configuration reload."""
+    global config_reload_in_progress, config_reload_last_status
+    return {
+        "in_progress": config_reload_in_progress,
+        "last_status": config_reload_last_status,
+        "timestamp": datetime.now().isoformat()
+    }
 
 @app.get("/api/requests")
 async def get_requests(limit: int = 100):
@@ -1419,14 +1534,20 @@ async def test_forward_endpoint(request: dict):
 async def get_config():
     """Get the current scanner configuration."""
     logger.debug("Config requested")
+
+    # Build scanners config safely
+    scanners_config = {}
+    if llamafirewall is not None:
+        scanners_config = {
+            role.name if hasattr(role, 'name') else str(role): [
+                getattr(scanner, 'name', str(scanner)) for scanner in scanner_list
+            ]
+            for role, scanner_list in llamafirewall.scanners.items()
+        }
+
     config_response = {
         "llamafirewall": {
-            "scanners": {
-                role.name if hasattr(role, 'name') else str(role): [
-                    getattr(scanner, 'name', str(scanner)) for scanner in scanner_list
-                ]
-                for role, scanner_list in llamafirewall.scanners.items()
-            }
+            "scanners": scanners_config
         },
         "llmguard": {
             "enabled": LLMGUARD_ENABLED,

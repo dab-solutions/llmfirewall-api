@@ -139,6 +139,12 @@ class ConfigUI {
             loadBtn.addEventListener('click', this.loadConfiguration.bind(this));
         }
         
+        // Add reload configuration button handler
+        const reloadBtn = document.getElementById('reloadConfigBtn');
+        if (reloadBtn) {
+            reloadBtn.addEventListener('click', this.reloadApplicationConfiguration.bind(this));
+        }
+        
         // Also add a direct click handler to the save button to trigger form submission
         const saveBtn = document.getElementById('saveGlobalConfigBtn');
         if (saveBtn) {
@@ -405,7 +411,12 @@ class ConfigUI {
             this.currentConfig = config;
             this.isDirty = false;
             this.updateStatus('Configuration saved successfully!', 'success');
-            announceToScreenReader('Configuration saved successfully');} catch (error) {
+            announceToScreenReader('Configuration saved successfully');
+
+            // Trigger configuration reload in the backend
+            setTimeout(() => this.reloadApplicationConfiguration(), 500);
+
+        } catch (error) {
             console.error('Error saving configuration:', error);
             this.updateStatus(`Failed to save configuration: ${error.message}`, 'error');
         }
@@ -707,6 +718,90 @@ class ConfigUI {
                 statusElement.className = 'status';
             }, 3000);
         }
+    }
+
+    /**
+     * Reload application configuration in the backend
+     */
+    async reloadApplicationConfiguration() {
+        try {
+            this.updateStatus('Reloading application configuration...', 'info');
+            
+            const response = await fetch('/api/reload-config', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`HTTP ${response.status}: ${errorText}`);
+            }
+    
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                this.updateStatus('Configuration reloaded successfully! Changes are now active.', 'success');
+                announceToScreenReader('Application configuration reloaded successfully');
+            } else if (result.status === 'already_in_progress') {
+                this.updateStatus('Configuration reload already in progress...', 'info');
+                // Poll for completion
+                this.pollReloadStatus();
+            } else {
+                throw new Error(result.message || 'Unknown error during reload');
+            }
+
+        } catch (error) {
+            console.error('Error reloading configuration:', error);
+            this.updateStatus(`Failed to reload configuration: ${error.message}`, 'error');
+        }
+    }
+
+    /**
+     * Poll for reload status completion
+     */
+    async pollReloadStatus() {
+        let attempts = 0;
+        const maxAttempts = 20; // Max 10 seconds (500ms * 20)
+        
+        const pollInterval = setInterval(async () => {
+            attempts++;
+
+            try {
+                const response = await fetch('/api/reload-config/status');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const status = await response.json();
+
+                if (!status.in_progress) {
+                    clearInterval(pollInterval);
+
+                    if (status.last_status === 'success') {
+                        this.updateStatus('Configuration reloaded successfully! Changes are now active.', 'success');
+                        announceToScreenReader('Application configuration reloaded successfully');
+                    } else if (status.last_status.startsWith('error:')) {
+                        this.updateStatus(`Configuration reload failed: ${status.last_status}`, 'error');
+                    } else {
+                        this.updateStatus('Configuration reload completed.', 'success');
+                    }
+                    return;
+                }
+
+                // Update progress message
+                this.updateStatus('Configuration reload in progress...', 'info');
+                
+            } catch (error) {
+                console.error('Error polling reload status:', error);
+            }
+
+            if (attempts >= maxAttempts) {
+                clearInterval(pollInterval);
+                this.updateStatus('Configuration reload is taking longer than expected. Please check the server logs.', 'warning');
+            }
+        }, 500);
     }
 
     /**

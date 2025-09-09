@@ -401,6 +401,17 @@ input[type="range"]::-moz-range-thumb {
     border-color: var(--secondary-color);
 }
 
+.btn-warning {
+    background-color: #f59e0b;
+    color: white;
+    border-color: #f59e0b;
+}
+
+.btn-warning:hover:not(:disabled) {
+    background-color: #d97706;
+    border-color: #d97706;
+}
+
 .btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
