@@ -1,85 +1,67 @@
 # Configuration Management System
 
-The LLM Firewall API now includes a powerful configuration management system that allows you to store and manage endpoint configurations, HTTP headers, and other settings in an external database.
+The LLM Firewall API includes a comprehensive configuration management system that allows you to store and manage endpoint configurations, HTTP headers, and other settings in a local database. This system provides a secure, scalable way to manage multiple endpoint configurations for automatic request forwarding.
 
 ## Features
 
 - **Database-backed Configuration**: Store configurations in SQLite (easily extensible to other databases)
 - **Endpoint Management**: Configure forwarding endpoints with custom headers, timeouts, and security settings
-- **Flexible Parameters**: Support for custom HTTP methods, SSL verification, retry logic, and conditional forwarding
+- **Flexible Parameters**: Support for custom HTTP methods, SSL verification, and conditional forwarding
 - **RESTful API**: Full CRUD operations for configuration management
+- **Web Interface**: User-friendly configuration management through the Forwarding tab
 - **Security**: Built-in validation and SSRF protection
-- **Future-ready**: Extensible schema for additional configuration types
+- **Automatic Forwarding**: Enable automatic forwarding to configured endpoints
+- **Testing**: Built-in endpoint testing and validation
 
 ## Quick Start
 
-### 1. Basic Usage with Stored Configuration
+### 1. Create an Endpoint Configuration
 
-```python
-import aiohttp
-import asyncio
+**Via Web Interface:**
+1. Navigate to http://localhost:8000
+2. Click the **Forwarding** tab
+3. Click "Create New Configuration"
+4. Fill in the configuration details
+5. Enable "Enable automatic forwarding for scan requests"
+6. Save the configuration
 
-async def create_and_use_config():
-    # Create an endpoint configuration
-    config_data = {
-        "name": "my-webhook",
-        "description": "My custom webhook endpoint",
-        "config_type": "endpoint",
-        "config_data": {
-            "url": "https://my-api.example.com/webhook",
-            "headers": {
-                "Authorization": "Bearer your-token",
-                "X-Source": "llm-firewall"
-            },
-            "timeout": 30,
-            "method": "POST",
-            "verify_ssl": True,
-            "include_scan_results": True,
-            "forward_on_unsafe": False
-        },
-        "tags": ["webhook", "production"]
-    }
-    
-    # Create the configuration
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            "http://localhost:8000/api/configurations",
-            json=config_data
-        ) as response:
-            result = await response.json()
-            print(f"Configuration created: {result['config_id']}")
-    
-    # Use the configuration in a scan request
-    scan_request = {
-        "content": "Hello, this is a test message.",
-        "endpoint_config_name": "my-webhook",
-        "additional_headers": {
-            "X-Request-ID": "12345"
-        }
-    }
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            "http://localhost:8000/scan",
-            json=scan_request
-        ) as response:
-            result = await response.json()
-            print(f"Scan completed: {result}")
-
-asyncio.run(create_and_use_config())
+**Via API:**
+```bash
+curl -X POST "http://localhost:8000/api/configurations" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-webhook",
+    "description": "My webhook endpoint",
+    "config_type": "endpoint",
+    "config_data": {
+      "url": "https://webhook.site/your-unique-id",
+      "headers": {
+        "Authorization": "Bearer your-token",
+        "X-Source": "llm-firewall"
+      },
+      "timeout": 30,
+      "forwarding_enabled": true,
+      "forward_on_unsafe": false,
+      "include_scan_results": true
+    },
+    "tags": ["webhook", "production"]
+  }'
 ```
 
-### 2. Scanning with Direct Endpoint (Legacy Support)
+### 2. Test the Configuration
 
-```python
-# You can still use direct endpoints as before
-scan_request = {
-    "content": "Test message",
-    "forward_endpoint": "https://webhook.site/your-id",
-    "additional_headers": {
-        "X-Custom": "value"
-    }
-}
+```bash
+curl -X POST "http://localhost:8000/api/endpoint-configurations/test/my-webhook"
+```
+
+### 3. Scan Content (Automatic Forwarding)
+
+Once you have configurations with `forwarding_enabled=true`, all scan requests are automatically forwarded:
+
+```bash
+curl -X POST "http://localhost:8000/scan" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Hello, this is a test message."}'
 ```
 
 ## Configuration Schema
@@ -99,7 +81,8 @@ scan_request = {
   "verify_ssl": true,
   "method": "POST",
   "include_scan_results": true,
-  "forward_on_unsafe": false
+  "forward_on_unsafe": false,
+  "forwarding_enabled": false
 }
 ```
 
@@ -107,13 +90,23 @@ scan_request = {
 
 - **url** (required): Target endpoint URL
 - **headers** (optional): Additional HTTP headers to include
-- **timeout** (optional, default: 30): Request timeout in seconds
+- **timeout** (optional, default: 30): Request timeout in seconds (1-300)
 - **retry_attempts** (optional, default: 3): Number of retry attempts
 - **retry_delay** (optional, default: 1.0): Delay between retries in seconds
 - **verify_ssl** (optional, default: true): Whether to verify SSL certificates
-- **method** (optional, default: "POST"): HTTP method to use
-- **include_scan_results** (optional, default: true): Include scan results in payload
+- **method** (optional, default: "POST"): HTTP method (GET, POST, PUT, PATCH, DELETE)
+- **include_scan_results** (optional, default: true): Include detailed scan results in payload
 - **forward_on_unsafe** (optional, default: false): Forward even if content is unsafe
+- **forwarding_enabled** (optional, default: false): **Enable automatic forwarding for all scan requests**
+
+### Configuration Record Fields
+
+- **name** (required): Unique identifier for the configuration
+- **description** (optional): Human-readable description
+- **config_type** (required): Type of configuration ("endpoint")
+- **config_data** (required): The endpoint configuration object
+- **tags** (optional): Array of tags for organization and filtering
+- **is_active** (optional, default: true): Whether the configuration is active
 
 ## API Endpoints
 
@@ -137,18 +130,20 @@ scan_request = {
 
 ### Enhanced Scan Endpoint
 
-The `/scan` endpoint now supports these additional parameters:
+The `/scan` endpoint automatically forwards requests to all endpoint configurations with `forwarding_enabled=true`:
 
 ```json
 {
-  "content": "Message to scan",
-  "forward_endpoint": "https://direct-url.com",
-  "endpoint_config_name": "stored-config-name",
-  "additional_headers": {
-    "X-Custom": "value"
-  }
+  "content": "Message to scan"
 }
 ```
+
+**Automatic Forwarding Behavior:**
+- All configurations with `forwarding_enabled=true` receive the scan request
+- Forwarding occurs after the security scan is completed
+- Multiple endpoints can receive the same request
+- Forwarding failures do not affect the scan results
+- The response includes forwarding results for monitoring
 
 ## Security Features
 
@@ -212,6 +207,7 @@ export CONFIG_DB_PATH="/path/to/your/config.db"
     },
     "timeout": 15,
     "verify_ssl": true,
+    "forwarding_enabled": true,
     "forward_on_unsafe": false,
     "include_scan_results": true
   },
@@ -233,6 +229,7 @@ export CONFIG_DB_PATH="/path/to/your/config.db"
       "X-Component": "llm-firewall"
     },
     "timeout": 10,
+    "forwarding_enabled": true,
     "forward_on_unsafe": true,
     "include_scan_results": true
   },
@@ -250,6 +247,7 @@ export CONFIG_DB_PATH="/path/to/your/config.db"
   "config_data": {
     "url": "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
     "timeout": 5,
+    "forwarding_enabled": true,
     "forward_on_unsafe": true,
     "include_scan_results": false
   },
@@ -257,34 +255,35 @@ export CONFIG_DB_PATH="/path/to/your/config.db"
 }
 ```
 
+### 4. Development Testing
+
+```json
+{
+  "name": "webhook-test",
+  "description": "Development testing endpoint",
+  "config_type": "endpoint",
+  "config_data": {
+    "url": "https://webhook.site/your-unique-id",
+    "headers": {
+      "X-Environment": "development"
+    },
+    "timeout": 30,
+    "forwarding_enabled": false,
+    "forward_on_unsafe": true,
+    "include_scan_results": true,
+    "verify_ssl": true
+  },
+  "tags": ["development", "testing"]
+}
+```
+
 ## Migration Guide
 
-### From Direct Endpoints
+### Current Implementation
 
-If you're currently using direct endpoints in your scan requests:
+The current implementation uses **automatic forwarding** based on endpoint configurations. Here's how to set it up:
 
-**Before:**
-```json
-{
-  "content": "test message",
-  "forward_endpoint": "https://webhook.site/unique-id"
-}
-```
-
-**After (Option 1 - Still Supported):**
-```json
-{
-  "content": "test message", 
-  "forward_endpoint": "https://webhook.site/unique-id",
-  "additional_headers": {
-    "X-Custom": "header"
-  }
-}
-```
-
-**After (Option 2 - Recommended):**
-
-1. Create a configuration:
+**Step 1: Create Endpoint Configuration**
 ```bash
 curl -X POST http://localhost:8000/api/configurations \
   -H "Content-Type: application/json" \
@@ -293,34 +292,79 @@ curl -X POST http://localhost:8000/api/configurations \
     "config_type": "endpoint",
     "config_data": {
       "url": "https://webhook.site/unique-id",
-      "headers": {"X-Custom": "header"}
+      "headers": {"X-Custom": "header"},
+      "forwarding_enabled": true
     }
   }'
 ```
 
-2. Use the configuration:
-```json
-{
-  "content": "test message",
-  "endpoint_config_name": "my-webhook"
-}
+**Step 2: Use Normal Scan Endpoint**
+```bash
+curl -X POST http://localhost:8000/scan \
+  -H "Content-Type: application/json" \
+  -d '{"content": "test message"}'
 ```
+
+The request will automatically be forwarded to all endpoints with `forwarding_enabled=true`.
+
+### For Multiple Endpoints
+
+Create multiple configurations with `forwarding_enabled=true` to forward to multiple endpoints:
+
+```bash
+# Create first endpoint
+curl -X POST http://localhost:8000/api/configurations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "production-webhook",
+    "config_type": "endpoint",
+    "config_data": {
+      "url": "https://prod.example.com/webhook",
+      "forwarding_enabled": true,
+      "forward_on_unsafe": false
+    }
+  }'
+
+# Create second endpoint
+curl -X POST http://localhost:8000/api/configurations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "audit-logger",
+    "config_type": "endpoint",
+    "config_data": {
+      "url": "https://logs.example.com/api/events",
+      "forwarding_enabled": true,
+      "forward_on_unsafe": true
+    }
+  }'
+```
+
+Now all scan requests will be forwarded to both endpoints automatically.
 
 ## Best Practices
 
-1. **Use Stored Configurations**: Prefer stored configurations over direct endpoints for better security and maintainability
+1. **Use Automatic Forwarding**: Set `forwarding_enabled=true` for endpoints that should receive all scan requests
 
-2. **Tag Your Configurations**: Use tags to organize configurations by environment, purpose, or team
+2. **Configure Safety Filtering**: Use `forward_on_unsafe=false` to prevent forwarding of potentially harmful content to production systems
 
-3. **Test Configurations**: Always test new configurations before using them in production
+3. **Tag Your Configurations**: Use tags to organize configurations by environment, purpose, or team
 
-4. **Monitor Forwarding**: Check forwarding results in scan responses to ensure successful delivery
+4. **Test Configurations**: Always test new configurations before enabling forwarding:
+   ```bash
+   curl -X POST "http://localhost:8000/api/endpoint-configurations/test/config-name"
+   ```
 
-5. **Secure Headers**: Store sensitive headers (like API keys) in the database rather than passing them in each request
+5. **Monitor Forwarding**: Check forwarding results in scan responses and the monitoring dashboard
 
-6. **Environment Separation**: Use different configuration names/tags for different environments (dev, staging, prod)
+6. **Secure Headers**: Store sensitive headers (like API keys) in the configuration rather than passing them per request
 
-7. **Regular Cleanup**: Periodically review and clean up unused configurations
+7. **Environment Separation**: Use different configuration names and tags for different environments
+
+8. **Regular Cleanup**: Periodically review and clean up unused configurations
+
+9. **Use HTTPS**: Always use HTTPS endpoints for production configurations
+
+10. **Configure Timeouts**: Set appropriate timeouts based on your endpoint's expected response time
 
 ## Troubleshooting
 
@@ -328,34 +372,74 @@ curl -X POST http://localhost:8000/api/configurations \
 
 1. **Configuration Not Found**
    - Check the configuration name spelling
-   - Verify the configuration is active
-   - Use the list endpoint to see available configurations
+   - Verify the configuration exists: `GET /api/configurations`
+   - Ensure the configuration is active (`is_active=true`)
 
-2. **Forwarding Failures**
-   - Test the configuration with the test endpoint
+2. **Forwarding Not Occurring**
+   - Verify `forwarding_enabled=true` in the endpoint configuration
+   - Check that the configuration is active
+   - Use the monitoring dashboard to check forwarding status
+
+3. **Forwarding Failures**
+   - Test the configuration: `POST /api/endpoint-configurations/test/{name}`
    - Check URL accessibility and SSL certificate validity
    - Verify authentication headers and permissions
+   - Check the endpoint's response time (must be under configured timeout)
 
-3. **Database Issues**
+4. **Multiple Endpoints Receiving Requests**
+   - This is expected behavior - all endpoints with `forwarding_enabled=true` receive requests
+   - Disable forwarding (`forwarding_enabled=false`) on endpoints that shouldn't receive all requests
+
+5. **Database Issues**
    - Check database file permissions for SQLite
-   - Verify database connection string for other databases
+   - Verify the database path is writable
    - Check application logs for detailed error messages
+
+6. **SSL/HTTPS Issues**
+   - Ensure valid SSL certificates for HTTPS endpoints
+   - Set `verify_ssl=false` for testing (not recommended for production)
+   - Check for certificate chain issues
 
 ### Debug Tips
 
-1. Enable debug logging: `LOG_LEVEL=DEBUG`
-2. Use the test endpoint to validate configurations
-3. Check the forwarding_result in scan responses
-4. Monitor application logs for detailed error information
+1. **Enable Debug Logging**: Set `LOG_LEVEL=DEBUG` for verbose configuration and forwarding information
+
+2. **Use Test Endpoints**: Always test configurations before enabling forwarding:
+   ```bash
+   curl -X POST "http://localhost:8000/api/endpoint-configurations/test/my-config"
+   ```
+
+3. **Check Monitoring Dashboard**: Use the monitoring tab in the web interface to see forwarding results
+
+4. **Review Configuration**: Get configuration details to verify settings:
+   ```bash
+   curl "http://localhost:8000/api/configurations/by-name/my-config"
+   ```
+
+5. **Monitor Application Logs**: Check logs for detailed error information and SSRF protection alerts
+
+### Configuration Validation
+
+The system performs extensive validation on configurations:
+- **URL Validation**: Ensures proper format and protocol
+- **SSRF Protection**: Blocks private IP addresses (with warnings in development)
+- **Header Validation**: Prevents dangerous header injection
+- **Timeout Limits**: Enforces reasonable timeout values (1-300 seconds)
+- **Method Validation**: Only allows safe HTTP methods
 
 ## Future Enhancements
 
-The configuration system is designed to be extensible. Planned features include:
+The configuration system is designed to be extensible. Planned and potential features include:
 
-- Configuration versioning and rollback
-- Configuration templates
-- Bulk operations
-- Configuration import/export
-- Advanced filtering and search
-- Configuration change notifications
-- Role-based access control
+- **Configuration versioning and rollback**
+- **Configuration templates and inheritance**
+- **Bulk operations and batch management**
+- **Configuration import/export functionality**
+- **Advanced filtering and search capabilities**
+- **Configuration change notifications and webhooks**
+- **Role-based access control (RBAC)**
+- **Configuration approval workflows**
+- **Performance analytics and optimization**
+- **Integration with external configuration management systems**
+
+The current implementation provides a solid foundation for these advanced features while maintaining simplicity and reliability for everyday use.
