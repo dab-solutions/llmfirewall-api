@@ -27,108 +27,8 @@ class ConfigUI {
         // Warn user about unsaved changes
         window.addEventListener('beforeunload', this.handleBeforeUnload.bind(this));
         
-        // Set up endpoint testing button - do this here to ensure method is available
-        const testEndpointBtn = document.getElementById('testEndpointBtn');
-        if (testEndpointBtn) {
-            
-            testEndpointBtn.addEventListener('click', async function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                console.log('Test endpoint button clicked directly'); // Debug log
-                
-                // HELPER FUNCTION: Display test results directly without relying on class method
-                function showTestResult(success, message, details) {
-                    console.log('Showing test result:', { success, message, details }); // Debug log
-                    
-                    const resultDiv = document.getElementById('endpointTestResult');
-                    if (!resultDiv) {
-                        console.error('endpointTestResult element not found');
-                        return;
-                    }
-
-                    resultDiv.className = `test-result ${success ? 'success' : 'error'}`;
-                    
-                    let html = `<h4>${success ? '✓ Test Successful' : '✗ Test Failed'}</h4>`;
-                    html += `<p>${message}</p>`;
-                    
-                    if (details) {
-                        if (details.status_code) {
-                            html += `<p><strong>Status Code:</strong> ${details.status_code}</p>`;
-                        }
-                        
-                        if (details.response_data && typeof details.response_data === 'object') {
-                            html += `<p><strong>Response:</strong></p>`;
-                            html += `<pre>${JSON.stringify(details.response_data, null, 2)}</pre>`;
-                        }
-                    }
-                    
-                    resultDiv.innerHTML = html;
-                    resultDiv.style.display = 'block';
-                    
-                    // Announce to screen readers if available
-                    if (typeof announceToScreenReader === 'function') {
-                        announceToScreenReader(success ? 'Endpoint test successful' : 'Endpoint test failed');
-                    }
-                }
-                
-                try {
-                    const endpointInput = document.getElementById('forwardEndpoint');
-                    const testBtn = document.getElementById('testEndpointBtn');
-                    const resultDiv = document.getElementById('endpointTestResult');
-                    
-                    if (!endpointInput || !testBtn || !resultDiv) {
-                        console.error('Required elements not found for endpoint testing');
-                        return;
-                    }
-                    
-                    const endpoint = endpointInput.value.trim();
-                    console.log('Endpoint to test:', endpoint); // Debug log
-                    
-                    if (!endpoint) {
-                        showTestResult(false, 'Please enter an endpoint URL to test', null);
-                        return;
-                    }
-                    
-                    // Update UI state
-                    testBtn.disabled = true;
-                    testBtn.classList.add('loading');
-                    testBtn.textContent = 'Testing...';
-                    resultDiv.style.display = 'none';
-                    
-                    console.log('Sending test request to /api/test-endpoint'); // Debug log
-                    
-                    // Send test request
-                    const response = await fetch('/api/test-endpoint', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ endpoint: endpoint })
-                    });
-                    
-                    console.log('Response received:', response.status, response.statusText); // Debug log
-                    
-                    const result = await response.json();
-                    console.log('Response data:', result); // Debug log
-                    
-                    if (response.ok) {
-                        showTestResult(result.success, result.error || 'Test completed', result);
-                    } else {
-                        showTestResult(false, result.detail || 'Test failed', null);
-                    }
-                } catch (error) {
-                    console.error('Error testing endpoint:', error);
-                    showTestResult(false, `Network error: ${error.message}`, null);
-                } finally {
-                    const testBtn = document.getElementById('testEndpointBtn');
-                    if (testBtn) {
-                        testBtn.disabled = false;
-                        testBtn.classList.remove('loading');
-                        testBtn.textContent = 'Test Endpoint';
-                    }
-                }
-            });
-        }
+        // Set up configuration management for the Forwarding tab
+        this.setupConfigurationManagement();
         
         console.log('ConfigUI initialization complete'); // Debug log
     }
@@ -228,12 +128,45 @@ class ConfigUI {
         const loadBtn = document.getElementById('loadConfigBtn');
 
         if (form) {
+            console.log('Setting up form submit handler');
             form.addEventListener('submit', this.handleFormSubmit.bind(this));
             form.addEventListener('input', this.handleFormInput.bind(this));
+        } else {
+            console.log('ERROR: Global config form not found!');
         }
         
         if (loadBtn) {
             loadBtn.addEventListener('click', this.loadConfiguration.bind(this));
+        }
+        
+        // Also add a direct click handler to the save button to trigger form submission
+        const saveBtn = document.getElementById('saveGlobalConfigBtn');
+        if (saveBtn) {
+            console.log('Setting up save button click handler');
+            saveBtn.addEventListener('click', (e) => {
+                console.log('Save button clicked directly');
+                this.updateStatus('Save button clicked, processing configuration...', 'info');
+                
+                // Prevent any default behavior
+                e.preventDefault();
+                
+                // Find the form and call our handler directly
+                const form = document.getElementById('configForm');
+                if (form) {
+                    console.log('Calling form submit handler directly');
+                    // Create a fake event object that our handler expects
+                    const fakeEvent = {
+                        preventDefault: () => {},
+                        target: form
+                    };
+                    this.handleFormSubmit(fakeEvent);
+                } else {
+                    console.log('ERROR: Could not find form to submit');
+                    this.updateStatus('Error: Configuration form not found', 'error');
+                }
+            });
+        } else {
+            console.log('ERROR: Save button not found!');
         }
 
         // Set up endpoint testing
@@ -395,6 +328,8 @@ class ConfigUI {
      */
     async handleFormSubmit(e) {
         e.preventDefault();
+        console.log('Form submit handler called');
+        this.updateStatus('Form submitted!', 'info');
         
         const form = e.target;
         const formData = new FormData(form);
@@ -466,13 +401,11 @@ class ConfigUI {
                 const errorText = await response.text();
                 throw new Error(`HTTP ${response.status}: ${errorText}`);
             }
-            
+
             this.currentConfig = config;
             this.isDirty = false;
             this.updateStatus('Configuration saved successfully!', 'success');
-            announceToScreenReader('Configuration saved successfully');
-            
-        } catch (error) {
+            announceToScreenReader('Configuration saved successfully');} catch (error) {
             console.error('Error saving configuration:', error);
             this.updateStatus(`Failed to save configuration: ${error.message}`, 'error');
         }
@@ -686,9 +619,7 @@ class ConfigUI {
         }
         
         if (tokenLimit) {
-            console.log('DEBUG: LLMGUARD_TOKEN_LIMIT value from config:', config.LLMGUARD_TOKEN_LIMIT);
             tokenLimit.value = config.LLMGUARD_TOKEN_LIMIT || '200';
-            console.log('DEBUG: Set tokenLimit field to:', tokenLimit.value);
         }
         
         if (failFast) {
@@ -712,9 +643,16 @@ class ConfigUI {
         // Ctrl/Cmd + S to save
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {
             e.preventDefault();
-            const form = document.getElementById('configForm');
-            if (form) {
-                form.dispatchEvent(new Event('submit', { bubbles: true }));
+            // Check which form is currently visible/active
+            const globalForm = document.getElementById('configForm');
+            const endpointForm = document.getElementById('endpointConfigForm');
+            const endpointFormSection = document.getElementById('configFormSection');
+            
+            // If endpoint form is visible, save endpoint config, otherwise save global config
+            if (endpointFormSection && endpointFormSection.style.display !== 'none' && endpointForm) {
+                endpointForm.dispatchEvent(new Event('submit', { bubbles: true }));
+            } else if (globalForm) {
+                globalForm.dispatchEvent(new Event('submit', { bubbles: true }));
             }
         }
         
@@ -750,7 +688,6 @@ class ConfigUI {
                 newStatusElement.id = 'status';
                 newStatusElement.className = 'status';
                 formActions.insertBefore(newStatusElement, formActions.firstChild);
-                console.log('DEBUG: Created new status element');
                 this.updateStatus(message, type); // Recursively call with new element
                 return;
             }
@@ -769,6 +706,631 @@ class ConfigUI {
                 statusElement.textContent = '';
                 statusElement.className = 'status';
             }, 3000);
+        }
+    }
+
+    /**
+     * Set up configuration management for the Forwarding tab
+     */
+    setupConfigurationManagement() {
+        console.log('Setting up configuration management...');
+        
+        // Load configurations when the forwarding tab is accessed
+        this.loadConfigurations();
+        
+        // Set up event listeners
+        this.setupConfigurationEventListeners();
+    }
+
+    /**
+     * Set up event listeners for configuration management
+     */
+    setupConfigurationEventListeners() {
+        // Create new configuration
+        const createBtn = document.getElementById('createConfigBtn');
+        if (createBtn) {
+            createBtn.addEventListener('click', () => this.showConfigForm());
+        }
+
+        // Refresh configurations
+        const refreshBtn = document.getElementById('refreshConfigsBtn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => this.loadConfigurations());
+        }
+
+        // Cancel configuration form
+        const cancelBtn = document.getElementById('cancelConfigBtn');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => this.hideConfigForm());
+        }
+
+        // Test configuration
+        const testBtn = document.getElementById('testConfigBtn');
+        if (testBtn) {
+            testBtn.addEventListener('click', () => this.testConfiguration());
+        }
+
+        // Save configuration
+        const configForm = document.getElementById('endpointConfigForm');
+        if (configForm) {
+            configForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.saveConfiguration();
+            });
+        }
+
+        // Also add a direct click handler to the endpoint save button
+        const saveEndpointBtn = document.getElementById('saveEndpointConfigBtn');
+        if (saveEndpointBtn) {
+            console.log('Setting up endpoint save button click handler');
+            saveEndpointBtn.addEventListener('click', (e) => {
+                console.log('Endpoint save button clicked directly');
+                
+                // Prevent any default behavior
+                e.preventDefault();
+                
+                // Call the save configuration method directly
+                this.saveConfiguration();
+            });
+        } else {
+            console.log('ERROR: Endpoint save button not found!');
+        }
+
+        // Add header button
+        const addHeaderBtn = document.getElementById('addHeaderBtn');
+        if (addHeaderBtn) {
+            addHeaderBtn.addEventListener('click', () => this.addHeaderRow());
+        }
+
+        // Set up initial header row remove functionality
+        this.setupHeaderRowEvents();
+    }
+
+    /**
+     * Load and display configurations
+     */
+    async loadConfigurations() {
+        const configsList = document.getElementById('configsList');
+        if (!configsList) return;
+
+        try {
+            configsList.innerHTML = '<div class="loading-message">Loading configurations...</div>';
+
+            const response = await fetch('/api/configurations');
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const responseData = await response.json();
+            console.log('Loaded response data:', responseData);
+            
+            // Extract configurations array from response
+            const configurations = responseData.configurations || [];
+            
+            // Ensure configurations is an array
+            if (!Array.isArray(configurations)) {
+                throw new Error('Invalid response format: configurations should be an array');
+            }
+
+            if (configurations.length === 0) {
+                configsList.innerHTML = `
+                    <div class="empty-state">
+                        <h4>No Configurations</h4>
+                        <p>Create your first endpoint configuration to get started.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const configsHtml = configurations.map(config => this.renderConfigItem(config)).join('');
+            configsList.innerHTML = configsHtml;
+
+            // Set up event listeners for config actions
+            this.setupConfigItemEvents();
+
+        } catch (error) {
+            console.error('Error loading configurations:', error);
+            configsList.innerHTML = `
+                <div class="empty-state">
+                    <h4>Error Loading Configurations</h4>
+                    <p>${error.message}</p>
+                    <button type="button" onclick="window.configUI.loadConfigurations()" class="btn btn-secondary">
+                        Retry
+                    </button>
+                </div>
+            `;
+        }
+    }
+
+    /**
+     * Render a configuration item
+     */
+    renderConfigItem(config) {
+        const configData = config.config_data;
+        const createdAt = new Date(config.created_at).toLocaleDateString();
+        
+        return `
+            <div class="config-item" data-config-id="${config.id}">
+                <div class="config-item-header">
+                    <div>
+                        <h4 class="config-item-name">${config.name}</h4>
+                        <span class="config-status ${config.is_active ? 'active' : 'inactive'}">
+                            ${config.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                    </div>
+                    <div class="config-item-actions">
+                        <button type="button" class="btn btn-secondary btn-small test-config-btn" 
+                                data-config-name="${config.name}" title="Test configuration">
+                            🧪 Test
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-small edit-config-btn" 
+                                data-config-name="${config.name}" title="Edit configuration">
+                            ✏️ Edit
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-small delete-config-btn" 
+                                data-config-name="${config.name}" title="Delete configuration">
+                            🗑️ Delete
+                        </button>
+                    </div>
+                </div>
+                <div class="config-item-details">
+                    ${config.description ? `<p>${config.description}</p>` : ''}
+                    <div class="config-item-url">${configData.url}</div>
+                    <div style="margin-top: 0.5rem;">
+                        <small>
+                            <strong>Method:</strong> ${configData.method} | 
+                            <strong>Timeout:</strong> ${configData.timeout}s | 
+                            <strong>Headers:</strong> ${Object.keys(configData.headers || {}).length} | 
+                            <strong>Created:</strong> ${createdAt}
+                        </small>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    /**
+     * Set up event listeners for configuration item actions
+     */
+    setupConfigItemEvents() {
+        // Test configuration buttons
+        document.querySelectorAll('.test-config-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const configName = e.target.dataset.configName;
+                this.testConfigurationByName(configName);
+            });
+        });
+
+        // Edit configuration buttons
+        document.querySelectorAll('.edit-config-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const configName = e.target.dataset.configName;
+                this.editConfiguration(configName);
+            });
+        });
+
+        // Delete configuration buttons
+        document.querySelectorAll('.delete-config-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const configName = e.target.dataset.configName;
+                this.deleteConfiguration(configName);
+            });
+        });
+    }
+
+    /**
+     * Show the configuration form
+     */
+    showConfigForm(editData = null) {
+        const formSection = document.getElementById('configFormSection');
+        const formTitle = document.getElementById('configFormTitle');
+        
+        if (!formSection || !formTitle) return;
+
+        if (editData) {
+            formTitle.textContent = 'Edit Configuration';
+            this.populateConfigForm(editData);
+        } else {
+            formTitle.textContent = 'Create New Configuration';
+            this.clearConfigForm();
+        }
+
+        formSection.style.display = 'block';
+        formSection.scrollIntoView({ behavior: 'smooth' });
+        
+        // Focus on the first input
+        const firstInput = document.getElementById('configName');
+        if (firstInput) {
+            firstInput.focus();
+        }
+    }
+
+    /**
+     * Hide the configuration form
+     */
+    hideConfigForm() {
+        const formSection = document.getElementById('configFormSection');
+        if (formSection) {
+            formSection.style.display = 'none';
+        }
+        this.clearConfigForm();
+    }
+
+    /**
+     * Clear the configuration form
+     */
+    clearConfigForm() {
+        const form = document.getElementById('endpointConfigForm');
+        if (form) {
+            form.reset();
+            
+            // Reset headers to just one empty row
+            const headersContainer = document.getElementById('headersContainer');
+            if (headersContainer) {
+                headersContainer.innerHTML = `
+                    <div class="header-row" data-index="0">
+                        <input type="text" placeholder="Header name (e.g., Authorization)" class="header-name">
+                        <input type="text" placeholder="Header value (e.g., Bearer \${API_KEY})" class="header-value">
+                        <button type="button" class="btn btn-icon remove-header" title="Remove header">❌</button>
+                    </div>
+                `;
+                this.setupHeaderRowEvents();
+            }
+        }
+    }
+
+    /**
+     * Populate the configuration form with existing data
+     */
+    populateConfigForm(config) {
+        const configData = config.config_data;
+        
+        document.getElementById('configName').value = config.name;
+        document.getElementById('configDescription').value = config.description || '';
+        document.getElementById('configUrl').value = configData.url;
+        document.getElementById('configMethod').value = configData.method;
+        document.getElementById('configTimeout').value = configData.timeout;
+        document.getElementById('configForwardingEnabled').checked = configData.forwarding_enabled || false;
+        document.getElementById('configIncludeScanResults').checked = configData.include_scan_results;
+        document.getElementById('configForwardOnUnsafe').checked = configData.forward_on_unsafe;
+        document.getElementById('configVerifySSL').checked = configData.verify_ssl;
+
+        // Populate headers
+        this.populateHeaders(configData.headers || {});
+    }
+
+    /**
+     * Populate headers in the form
+     */
+    populateHeaders(headers) {
+        const headersContainer = document.getElementById('headersContainer');
+        if (!headersContainer) return;
+
+        const headerEntries = Object.entries(headers);
+        
+        if (headerEntries.length === 0) {
+            // Keep the default empty row
+            return;
+        }
+
+        const headersHtml = headerEntries.map(([ name, value ], index) => `
+            <div class="header-row" data-index="${index}">
+                <input type="text" placeholder="Header name" class="header-name" value="${name}">
+                <input type="text" placeholder="Header value" class="header-value" value="${value}">
+                <button type="button" class="btn btn-icon remove-header" title="Remove header">❌</button>
+            </div>
+        `).join('');
+
+        headersContainer.innerHTML = headersHtml;
+        this.setupHeaderRowEvents();
+    }
+
+    /**
+     * Add a new header row
+     */
+    addHeaderRow() {
+        const headersContainer = document.getElementById('headersContainer');
+        if (!headersContainer) return;
+
+        const existingRows = headersContainer.querySelectorAll('.header-row');
+        const newIndex = existingRows.length;
+
+        const newRow = document.createElement('div');
+        newRow.className = 'header-row';
+        newRow.dataset.index = newIndex;
+        newRow.innerHTML = `
+            <input type="text" placeholder="Header name" class="header-name">
+            <input type="text" placeholder="Header value" class="header-value">
+            <button type="button" class="btn btn-icon remove-header" title="Remove header">❌</button>
+        `;
+
+        headersContainer.appendChild(newRow);
+        this.setupHeaderRowEvents();
+
+        // Focus on the new header name input
+        const nameInput = newRow.querySelector('.header-name');
+        if (nameInput) {
+            nameInput.focus();
+        }
+    }
+
+    /**
+     * Set up event listeners for header rows
+     */
+    setupHeaderRowEvents() {
+        document.querySelectorAll('.remove-header').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const headerRow = e.target.closest('.header-row');
+                if (headerRow) {
+                    const headersContainer = document.getElementById('headersContainer');
+                    const remainingRows = headersContainer.querySelectorAll('.header-row');
+                    
+                    // Keep at least one row
+                    if (remainingRows.length > 1) {
+                        headerRow.remove();
+                    } else {
+                        // Clear the last row instead of removing it
+                        headerRow.querySelector('.header-name').value = '';
+                        headerRow.querySelector('.header-value').value = '';
+                    }
+                }
+            });
+        });
+    }
+
+    /**
+     * Save configuration
+     */
+    async saveConfiguration() {
+        const formData = this.getConfigFormData();
+        if (!formData) return;
+
+        const saveBtn = document.getElementById('saveEndpointConfigBtn');
+        const originalText = saveBtn.textContent;
+        
+        try {
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+
+            const isEdit = document.getElementById('configFormTitle').textContent.includes('Edit');
+            const url = isEdit 
+                ? `/api/configurations/endpoints/${formData.name}`
+                : '/api/configurations/endpoints';
+            const method = isEdit ? 'PUT' : 'POST';
+
+            const response = await fetch(url, {
+                method: method,
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(formData)
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Failed to save configuration');
+            }
+
+            const result = await response.json();
+            console.log('Configuration saved:', result);
+
+            this.hideConfigForm();
+            this.loadConfigurations();
+            this.updateStatus(`Configuration "${formData.name}" ${isEdit ? 'updated' : 'created'} successfully`, 'success');
+
+        } catch (error) {
+            console.error('Error saving configuration:', error);
+            this.updateStatus(`Error saving configuration: ${error.message}`, 'error');
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.textContent = originalText;
+        }
+    }
+
+    /**
+     * Get form data for configuration
+     */
+    getConfigFormData() {
+        const name = document.getElementById('configName').value.trim();
+        const description = document.getElementById('configDescription').value.trim();
+        const url = document.getElementById('configUrl').value.trim();
+        const method = document.getElementById('configMethod').value;
+        const timeout = parseInt(document.getElementById('configTimeout').value);
+
+        if (!name || !url) {
+            this.updateStatus('Name and URL are required', 'error');
+            return null;
+        }
+
+        // Collect headers
+        const headers = {};
+        document.querySelectorAll('.header-row').forEach(row => {
+            const nameInput = row.querySelector('.header-name');
+            const valueInput = row.querySelector('.header-value');
+            
+            if (nameInput.value.trim() && valueInput.value.trim()) {
+                headers[nameInput.value.trim()] = valueInput.value.trim();
+            }
+        });
+
+        return {
+            name,
+            description: description || null,
+            endpoint_config: {
+                url,
+                method,
+                timeout,
+                headers,
+                forwarding_enabled: document.getElementById('configForwardingEnabled').checked,
+                include_scan_results: document.getElementById('configIncludeScanResults').checked,
+                forward_on_unsafe: document.getElementById('configForwardOnUnsafe').checked,
+                verify_ssl: document.getElementById('configVerifySSL').checked,
+                retry_attempts: 3,
+                retry_delay: 1.0
+            }
+        };
+    }
+
+    /**
+     * Test configuration
+     */
+    async testConfiguration() {
+        const formData = this.getConfigFormData();
+        if (!formData) return;
+
+        await this.testConfigurationData(formData.endpoint_config);
+    }
+
+    /**
+     * Test configuration by name
+     */
+    async testConfigurationByName(configName) {
+        try {
+            const response = await fetch(`/api/configurations/endpoints/${configName}`);
+            if (!response.ok) {
+                throw new Error(`Failed to load configuration: ${response.statusText}`);
+            }
+
+            const config = await response.json();
+            await this.testConfigurationData(config);
+
+        } catch (error) {
+            console.error('Error loading configuration for test:', error);
+            this.showTestResult(false, `Error loading configuration: ${error.message}`, null);
+        }
+    }
+
+    /**
+     * Test configuration data
+     */
+    async testConfigurationData(configData) {
+        const testBtn = document.getElementById('testConfigBtn');
+        const resultDiv = document.getElementById('configTestResult');
+        
+        try {
+            if (testBtn) {
+                testBtn.disabled = true;
+                testBtn.textContent = 'Testing...';
+            }
+            
+            if (resultDiv) {
+                resultDiv.style.display = 'none';
+            }
+
+            const response = await fetch('/api/test-endpoint', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    endpoint: configData.url,
+                    method: configData.method,
+                    headers: configData.headers,
+                    timeout: configData.timeout
+                })
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+                this.showTestResult(result.success, result.error || 'Test completed successfully', result);
+            } else {
+                this.showTestResult(false, result.detail || 'Test failed', null);
+            }
+
+        } catch (error) {
+            console.error('Error testing configuration:', error);
+            this.showTestResult(false, `Network error: ${error.message}`, null);
+        } finally {
+            if (testBtn) {
+                testBtn.disabled = false;
+                testBtn.textContent = 'Test Configuration';
+            }
+        }
+    }
+
+    /**
+     * Show test result
+     */
+    showTestResult(success, message, details) {
+        const resultDiv = document.getElementById('configTestResult');
+        if (!resultDiv) return;
+
+        resultDiv.className = `test-result ${success ? 'success' : 'error'}`;
+        
+        let html = `<h4>${success ? '✓ Test Successful' : '✗ Test Failed'}</h4>`;
+        html += `<p>${message}</p>`;
+        
+        if (details) {
+            if (details.status_code) {
+                html += `<p><strong>Status Code:</strong> ${details.status_code}</p>`;
+            }
+            
+            if (details.response_data && typeof details.response_data === 'object') {
+                html += `<p><strong>Response:</strong></p>`;
+                html += `<pre>${JSON.stringify(details.response_data, null, 2)}</pre>`;
+            }
+        }
+        
+        resultDiv.innerHTML = html;
+        resultDiv.style.display = 'block';
+        resultDiv.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    /**
+     * Edit configuration
+     */
+    async editConfiguration(configName) {
+        try {
+            const response = await fetch(`/api/configurations/endpoints/${configName}`);
+            if (!response.ok) {
+                throw new Error(`Failed to load configuration: ${response.statusText}`);
+            }
+
+            const configResponse = await response.json();
+            
+            // Get the full configuration record
+            const configsResponse = await fetch('/api/configurations');
+            const allConfigsData = await configsResponse.json();
+            const allConfigs = allConfigsData.configurations || [];
+            const config = allConfigs.find(c => c.name === configName);
+
+            if (config) {
+                this.showConfigForm(config);
+            } else {
+                throw new Error('Configuration not found');
+            }
+
+        } catch (error) {
+            console.error('Error loading configuration for edit:', error);
+            this.updateStatus(`Error loading configuration: ${error.message}`, 'error');
+        }
+    }
+
+    /**
+     * Delete configuration
+     */
+    async deleteConfiguration(configName) {
+        if (!confirm(`Are you sure you want to delete the configuration "${configName}"?`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/configurations/endpoints/${configName}`, {
+                method: 'DELETE'
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Failed to delete configuration');
+            }
+
+            this.loadConfigurations();
+            this.updateStatus(`Configuration "${configName}" deleted successfully`, 'success');
+
+        } catch (error) {
+            console.error('Error deleting configuration:', error);
+            this.updateStatus(`Error deleting configuration: ${error.message}`, 'error');
         }
     }
 }
@@ -1466,21 +2028,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const configUI = new ConfigUI();
     
-    // Additional check for the test button after initialization
-    setTimeout(() => {
-        const testBtn = document.getElementById('testEndpointBtn');
-        console.log('Post-init button check:', testBtn);
-        if (testBtn) {
-            console.log('Button disabled state:', testBtn.disabled);
-            console.log('Button classes:', testBtn.className);
-            console.log('Button text:', testBtn.textContent);
-            
-            // Test if the click event is working
-            testBtn.addEventListener('click', () => {
-                console.log('Direct click listener triggered!');
-            });
-        }
-    }, 1000);
+    // Make configUI available globally for configuration management
+    window.configUI = configUI;
     
     // Initialize monitoring if the monitoring tab is present
     const monitoringPanel = document.getElementById('panel-monitoring');

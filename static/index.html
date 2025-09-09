@@ -20,10 +20,6 @@
             <!-- Skip Link for accessibility -->
             <a href="#maincontent" class="sr-only">Skip to main content</a>
             
-            <div class="status-bar" id="statusBar" role="status" aria-live="polite" aria-atomic="true">
-                <span class="status-text" id="statusText">Ready</span>
-            </div>
-
             <div class="tabs" role="tablist" aria-label="Configuration Sections">
                 <button 
                     class="tab-button active" 
@@ -567,73 +563,171 @@
 
                 <!-- Forwarding Configuration -->
                 <div class="tab-panel" id="panel-forwarding" role="tabpanel" aria-labelledby="tab-forwarding">
-                    <h2>Request Forwarding</h2>
+                    <h2>Request Forwarding Configuration</h2>
                     <p class="description">
-                        Configure request forwarding to automatically send scanned content to external endpoints.
-                        This feature allows you to integrate the firewall with downstream services.
+                        Configure endpoint configurations for request forwarding. Create, manage, and test 
+                        endpoint configurations that can be used when scanning content.
                     </p>
                     
-                    <div class="form-group">
-                        <label for="forwardEndpoint">
-                            Forward Endpoint URL
-                            <span class="optional">(Test Only)</span>
-                        </label>
-                        <div class="input-group">
-                            <input 
-                                type="url" 
-                                id="forwardEndpoint" 
-                                placeholder="https://api.example.com/webhook"
-                                aria-describedby="forwardEndpoint-help"
-                                class="endpoint-input"
-                            >
-                            <button 
-                                type="button" 
-                                id="testEndpointBtn" 
-                                class="btn btn-secondary"
-                                aria-describedby="testEndpoint-help"
-                            >
-                                Test Endpoint
-                            </button>
+                    <!-- Configuration Management Section -->
+                    <div class="config-section">
+                        <h3>Endpoint Configurations</h3>
+                        
+                        <div class="form-group">
+                            <div class="button-group">
+                                <button type="button" id="createConfigBtn" class="btn btn-primary">
+                                    ➕ Create New Configuration
+                                </button>
+                                <button type="button" id="refreshConfigsBtn" class="btn btn-secondary">
+                                    🔄 Refresh
+                                </button>
+                            </div>
                         </div>
-                        <div class="help-text" id="forwardEndpoint-help">
-                            Enter a URL to test the forwarding functionality. The endpoint will receive a POST request with the scanned content and security assessment.
-                        </div>
-                        <div class="help-text" id="testEndpoint-help">
-                            Test the endpoint by sending a sample request to verify connectivity and response.
+                        
+                        <!-- Configuration List -->
+                        <div id="configsList" class="configs-list">
+                            <div class="loading-message">Loading configurations...</div>
                         </div>
                     </div>
-
-                    <div class="form-group">
-                        <div class="info-box">
-                            <h3>Forward Request Format</h3>
-                            <p>When forwarding is enabled, the target endpoint will receive a POST request with the following JSON payload:</p>
-                            <pre><code>{
-  "content": "The original message content",
-  "is_safe": true,
-  "timestamp": "2024-01-15T10:30:00",
-  "source": "llama_firewall_api"
-}</code></pre>
-                            <p><strong>Headers:</strong></p>
-                            <ul>
-                                <li><code>Content-Type: application/json</code></li>
-                                <li><code>User-Agent: LlamaFirewall-API/1.1.0</code></li>
-                            </ul>
-                        </div>
+                    
+                    <!-- Configuration Form Section (Hidden by default) -->
+                    <div id="configFormSection" class="config-form-section" style="display: none;">
+                        <h3 id="configFormTitle">Create New Configuration</h3>
+                        
+                        <form id="endpointConfigForm" class="config-form">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="configName">Configuration Name</label>
+                                    <input 
+                                        type="text" 
+                                        id="configName" 
+                                        required
+                                        placeholder="e.g., production-openai"
+                                        aria-describedby="configName-help"
+                                    >
+                                    <div class="help-text" id="configName-help">
+                                        A unique name to identify this configuration
+                                    </div>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="configDescription">Description</label>
+                                    <input 
+                                        type="text" 
+                                        id="configDescription" 
+                                        placeholder="e.g., Production OpenAI endpoint"
+                                        aria-describedby="configDescription-help"
+                                    >
+                                    <div class="help-text" id="configDescription-help">
+                                        Optional description for this configuration
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="configUrl">Endpoint URL</label>
+                                <input 
+                                    type="url" 
+                                    id="configUrl" 
+                                    required
+                                    placeholder="https://api.example.com/v1/chat/completions"
+                                    aria-describedby="configUrl-help"
+                                >
+                                <div class="help-text" id="configUrl-help">
+                                    The target URL where requests will be forwarded
+                                </div>
+                            </div>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="configMethod">HTTP Method</label>
+                                    <select id="configMethod" required>
+                                        <option value="POST">POST</option>
+                                        <option value="PUT">PUT</option>
+                                        <option value="PATCH">PATCH</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="configTimeout">Timeout (seconds)</label>
+                                    <input 
+                                        type="number" 
+                                        id="configTimeout" 
+                                        min="1" 
+                                        max="300" 
+                                        value="30"
+                                        required
+                                    >
+                                </div>
+                            </div>
+                            
+                            <!-- Headers Section -->
+                            <div class="form-group">
+                                <label>HTTP Headers</label>
+                                <div id="headersContainer" class="headers-container">
+                                    <div class="header-row" data-index="0">
+                                        <input 
+                                            type="text" 
+                                            placeholder="Header name (e.g., Authorization)" 
+                                            class="header-name"
+                                        >
+                                        <input 
+                                            type="text" 
+                                            placeholder="Header value (e.g., Bearer ${API_KEY})" 
+                                            class="header-value"
+                                        >
+                                        <button type="button" class="btn btn-icon remove-header" title="Remove header">
+                                            ❌
+                                        </button>
+                                    </div>
+                                </div>
+                                <button type="button" id="addHeaderBtn" class="btn btn-secondary btn-small">
+                                    ➕ Add Header
+                                </button>
+                                <div class="help-text">
+                                    Add custom HTTP headers. Use ${VARIABLE_NAME} for environment variables.
+                                </div>
+                            </div>
+                            
+                            <!-- Advanced Options -->
+                            <div class="form-group">
+                                <label>Advanced Options</label>
+                                <div class="checkbox-group">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="configForwardingEnabled">
+                                        Enable automatic forwarding for scan requests
+                                    </label>
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="configIncludeScanResults" checked>
+                                        Include scan results in forwarded payload
+                                    </label>
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="configForwardOnUnsafe">
+                                        Forward even if content is marked unsafe
+                                    </label>
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="configVerifySSL" checked>
+                                        Verify SSL certificates
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div class="form-actions">
+                                <button type="button" id="cancelConfigBtn" class="btn btn-secondary">
+                                    Cancel
+                                </button>
+                                <button type="button" id="testConfigBtn" class="btn btn-secondary">
+                                    Test Configuration
+                                </button>
+                                <button type="submit" id="saveEndpointConfigBtn" class="btn btn-primary">
+                                    Save Configuration
+                                </button>
+                            </div>
+                        </form>
                     </div>
-
-                    <div class="form-group">
-                        <div class="info-box">
-                            <h3>Security Considerations</h3>
-                            <ul>
-                                <li>Only HTTPS and HTTP protocols are allowed</li>
-                                <li>Localhost and private IP addresses are blocked to prevent SSRF attacks</li>
-                                <li>Request timeout is set to 30 seconds</li>
-                                <li>SSL certificates are verified for HTTPS endpoints</li>
-                            </ul>
-                        </div>
-                    </div>
-
-                    <div id="endpointTestResult" class="test-result" style="display: none;">
+                    
+                    <!-- Test Results -->
+                    <div id="configTestResult" class="test-result" style="display: none;">
                         <!-- Test results will be displayed here -->
                     </div>
                 </div>
@@ -643,7 +737,7 @@
                     <button type="button" id="loadConfigBtn" class="btn btn-secondary">
                         Load Current Config
                     </button>
-                    <button type="submit" id="saveConfigBtn" class="btn btn-primary">
+                    <button type="submit" id="saveGlobalConfigBtn" class="btn btn-primary">
                         Save Configuration
                     </button>
                 </div>

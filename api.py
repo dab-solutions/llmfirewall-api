@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ValidationError
 from llamafirewall import LlamaFirewall, UserMessage, Role, ScannerType, ScanDecision
 from typing import Optional, Dict, List, Pattern, Tuple, Any
 from openai import AsyncOpenAI
@@ -20,26 +20,15 @@ import shutil
 import uuid
 from collections import deque
 import time
-from pydantic import BaseModel, Field, field_validator
-from llamafirewall import LlamaFirewall, UserMessage, Role, ScannerType, ScanDecision
-from typing import Optional, Dict, List, Pattern, Tuple, Any
-from openai import AsyncOpenAI
-from concurrent.futures import ThreadPoolExecutor
-from tenacity import retry, stop_after_attempt, wait_exponential
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
-from contextlib import asynccontextmanager
-from dotenv import load_dotenv
-import asyncio
-import os
-import json
-import logging
-import logging.handlers
-from datetime import datetime
-import re
-import shutil
 import aiohttp
 from urllib.parse import urlparse
+
+# Import configuration manager
+from config_manager import (
+    ConfigurationManager, EndpointConfiguration, ConfigurationRecord,
+    CreateConfigurationRequest, UpdateConfigurationRequest,
+    get_config_manager, close_config_manager
+)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -132,11 +121,28 @@ thread_pool = ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS)
 async def lifespan(app: FastAPI):
     """Application lifespan management."""
     # Startup
+    logger.info("Starting up application")
+
+    # Initialize configuration manager
+    try:
+        await get_config_manager()
+        logger.info("Configuration manager initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize configuration manager: {e}")
+
     yield
+
     # Shutdown
     logger.info("Shutting down application")
     thread_pool.shutdown(wait=True)
     logger.info("Thread pool shutdown complete")
+
+    # Close configuration manager
+    try:
+        await close_config_manager()
+        logger.info("Configuration manager closed")
+    except Exception as e:
+        logger.error(f"Error closing configuration manager: {e}")
 
 app = FastAPI(
     title="LLM Firewall API",
@@ -210,6 +216,34 @@ moderation = False
 LLMGUARD_ENABLED = False
 LLMGUARD_SCANNERS = []
 LLMGUARD_CONFIG = {}
+
+async def get_forwarding_enabled_endpoints():
+    """
+    Get all endpoint configurations that have forwarding enabled.
+    
+    Returns:
+        List of endpoint configurations with forwarding enabled
+    """
+    try:
+        config_manager = await get_config_manager()
+        # Get all endpoint configurations
+        all_configs = await config_manager.list_configurations(config_type="endpoint")
+        
+        # Filter for configurations with forwarding enabled
+        forwarding_configs = []
+        for config_record in all_configs:
+            try:
+                endpoint_config = EndpointConfiguration(**config_record.config_data)
+                if endpoint_config.forwarding_enabled:
+                    forwarding_configs.append((config_record.name, endpoint_config))
+            except Exception as e:
+                logger.warning(f"Failed to parse endpoint configuration {config_record.name}: {e}")
+                continue
+        
+        return forwarding_configs
+    except Exception as e:
+        logger.error(f"Failed to get forwarding enabled endpoints: {e}")
+        return []
 
 def parse_llmguard_config() -> Tuple[bool, List[Any], Dict[str, Any]]:
     """
@@ -426,7 +460,7 @@ class ConfigResponse(BaseModel):
     success: bool
     message: str
     config: Optional[Dict[str, Any]] = None
-    
+
     model_config = {"frozen": True}
 
 class OpenAIModerationResponse(BaseModel):
@@ -434,13 +468,12 @@ class OpenAIModerationResponse(BaseModel):
     id: str
     model: str
     results: List[ModerationResult]
-    
+
     model_config = {"frozen": True}
 
 class ScanRequest(BaseModel):
     """Request model for scanning messages."""
     content: str = Field(min_length=1, max_length=10000)  # Constrain content length between 1 and 10000 characters
-    forward_endpoint: Optional[str] = Field(None, description="Optional endpoint to forward the request to after scanning")
 
     model_config = {"frozen": True}
 
@@ -462,60 +495,6 @@ class ScanRequest(BaseModel):
             raise ValueError("Content contains excessive repeated characters")
 
         return v
-    
-    @field_validator('forward_endpoint')
-    @classmethod
-    def validate_forward_endpoint(cls, v: Optional[str]) -> Optional[str]:
-        """Validate forward endpoint URL for security."""
-        if v is None:
-            return v
-        
-        # Ensure the URL is valid and uses secure protocols
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme:
-                raise ValueError("Forward endpoint must include a protocol (http:// or https://)")
-            
-            if parsed.scheme not in ['http', 'https']:
-                raise ValueError("Forward endpoint must use HTTP or HTTPS protocol")
-            
-            if not parsed.netloc:
-                raise ValueError("Forward endpoint must include a valid host")
-            
-            # Prevent SSRF attacks by blocking private IP ranges and localhost
-            hostname = parsed.hostname
-            if hostname:
-                # Block localhost variants
-                #if hostname.lower() in ['localhost', '127.0.0.1', '::1']:
-                #    raise ValueError("Forward endpoint cannot point to localhost")
-                
-                # Block common private IP ranges (this is a basic check)
-                if (hostname.startswith('192.168.') or 
-                    hostname.startswith('10.') or 
-                    hostname.startswith('172.16.') or
-                    hostname.startswith('172.17.') or
-                    hostname.startswith('172.18.') or
-                    hostname.startswith('172.19.') or
-                    hostname.startswith('172.20.') or
-                    hostname.startswith('172.21.') or
-                    hostname.startswith('172.22.') or
-                    hostname.startswith('172.23.') or
-                    hostname.startswith('172.24.') or
-                    hostname.startswith('172.25.') or
-                    hostname.startswith('172.26.') or
-                    hostname.startswith('172.27.') or
-                    hostname.startswith('172.28.') or
-                    hostname.startswith('172.29.') or
-                    hostname.startswith('172.30.') or
-                    hostname.startswith('172.31.')):
-                    raise ValueError("Forward endpoint cannot point to private IP addresses")
-                    
-            return v.strip()
-            
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise
-            raise ValueError(f"Invalid forward endpoint URL: {str(e)}")
 
 class ForwardingResponse(BaseModel):
     """Response model for forwarding results."""
@@ -523,7 +502,7 @@ class ForwardingResponse(BaseModel):
     status_code: Optional[int] = None
     response_data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
-    
+
     model_config = {"frozen": True}
 
 class ScanResponse(BaseModel):
@@ -535,7 +514,7 @@ class ScanResponse(BaseModel):
     llmguard_results: Optional[Dict[str, Any]] = None
     forwarding_result: Optional[ForwardingResponse] = None
     scan_type: str
-    
+
     model_config = {"frozen": True}
 
 @retry(
@@ -550,7 +529,7 @@ async def perform_openai_moderation(content: str) -> OpenAIModerationResponse:
             status_code=503,
             detail="OpenAI client not initialized"
         )
-        
+
     try:
         logger.debug("Performing OpenAI moderation", extra=sanitize_log_data({"content": content}))
         response = await async_client.moderations.create(
@@ -590,30 +569,30 @@ async def perform_openai_moderation(content: str) -> OpenAIModerationResponse:
 async def perform_llmguard_scan(content: str) -> Tuple[str, Dict[str, bool], Dict[str, float]]:
     """
     Perform LLM Guard scanning with retry logic.
-    
+
     Returns:
         Tuple of (sanitized_content, validation_results, risk_scores)
     """
     if not LLMGUARD_ENABLED or not LLMGUARD_SCANNERS:
         return content, {}, {}
-    
+
     if scan_prompt is None:
         logger.error("LLM Guard scan_prompt function not available")
         return content, {}, {}
-    
+
     try:
         logger.debug("Performing LLM Guard scan", extra=sanitize_log_data({"content": content}))
-        
+
         # Call the actual scan function directly (we've checked it's not None above)
         def _do_scan():
             # At this point we know scan_prompt is not None due to the check above
             return scan_prompt(LLMGUARD_SCANNERS, content, fail_fast=LLMGUARD_CONFIG.get('fail_fast', True))  # type: ignore
-        
+
         # Use thread pool for LLM Guard scan since it's CPU intensive
         result = await asyncio.get_event_loop().run_in_executor(thread_pool, _do_scan)
-        
+
         sanitized_content, validation_results, risk_scores = result
-        
+
         # Log results
         failed_scanners = [name for name, valid in validation_results.items() if not valid]
         if failed_scanners:
@@ -625,51 +604,103 @@ async def perform_llmguard_scan(content: str) -> Tuple[str, Dict[str, bool], Dic
             logger.debug("Content passed LLM Guard scan")
         
         return sanitized_content, validation_results, risk_scores
-        
+
     except Exception as e:
         logger.error("Error during LLM Guard scan", exc_info=True, extra=sanitize_log_data({"error": str(e)}))
         # Don't fail the request if LLM Guard fails, just log and continue
         return content, {}, {}
 
-async def forward_request_to_endpoint(content: str, endpoint: str, is_safe: bool) -> ForwardingResponse:
+async def forward_request_to_endpoint(
+    content: str, 
+    endpoint_url: Optional[str] = None,
+    endpoint_config: Optional[EndpointConfiguration] = None,
+    additional_headers: Optional[Dict[str, str]] = None,
+    is_safe: bool = True
+) -> ForwardingResponse:
     """
-    Forward the scanned content to the specified endpoint.
-    
+    Forward the scanned content to the specified endpoint using configuration.
+
     Args:
         content: The original content that was scanned
-        endpoint: The target endpoint URL to forward to
+        endpoint_url: Direct URL to forward to (overrides config)
+        endpoint_config: EndpointConfiguration object with forwarding settings
+        additional_headers: Additional headers to include
         is_safe: Whether the content was deemed safe by scanning
-        
+
     Returns:
         ForwardingResponse containing the result of the forwarding operation
     """
+    url = "unknown"  # Initialize for error handling
+
     try:
-        logger.info(f"Forwarding request to endpoint: {endpoint}")
+        # Determine which configuration to use
+        if endpoint_url:
+            # Use direct URL with default configuration
+            url = endpoint_url
+            headers = {"Content-Type": "application/json", "User-Agent": "LlamaFirewall-API/1.1.0"}
+            timeout_seconds = 30
+            method = "POST"
+            verify_ssl = True
+            include_scan_results = True
+            forward_on_unsafe = False
+        elif endpoint_config:
+            # Use stored configuration
+            url = endpoint_config.url
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "LlamaFirewall-API/1.1.0",
+                **endpoint_config.headers
+            }
+            timeout_seconds = endpoint_config.timeout
+            method = endpoint_config.method
+            verify_ssl = endpoint_config.verify_ssl
+            include_scan_results = endpoint_config.include_scan_results
+            forward_on_unsafe = endpoint_config.forward_on_unsafe
+        else:
+            raise ValueError("Either endpoint_url or endpoint_config must be provided")
+
+        # Check if we should forward unsafe content
+        if not is_safe and not forward_on_unsafe:
+            logger.info(f"Skipping forwarding to {url} because content is unsafe and forward_on_unsafe=False")
+            return ForwardingResponse(
+                success=False,
+                status_code=None,
+                response_data=None,
+                error="Content marked as unsafe and forward_on_unsafe is disabled"
+            )
+
+        # Add additional headers if provided
+        if additional_headers:
+            # Filter out dangerous headers (already done in validation)
+            headers.update(additional_headers)
         
+        logger.info(f"Forwarding request to endpoint: {url}")
+
         # Prepare the payload to send
-        payload = {
+        payload: Dict[str, Any] = {
             "content": content,
-            "is_safe": is_safe,
             "timestamp": datetime.now().isoformat(),
             "source": "llama_firewall_api"
         }
-        
+
+        # Include scan results if configured
+        if include_scan_results:
+            payload["is_safe"] = is_safe
+
         # Set up HTTP client with security configurations
-        timeout = aiohttp.ClientTimeout(total=30)  # 30 second timeout
+        timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         connector = aiohttp.TCPConnector(
             limit=10,  # Limit concurrent connections
-            ssl=True   # Verify SSL certificates
+            ssl=verify_ssl   # Verify SSL certificates based on config
         )
-        
+
         async with aiohttp.ClientSession(
             timeout=timeout,
             connector=connector,
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": "LlamaFirewall-API/1.1.0"
-            }
+            headers=headers
         ) as session:
-            async with session.post(endpoint, json=payload) as response:
+            # Use the configured HTTP method
+            async with session.request(method, url, json=payload) as response:
                 # Read response content
                 try:
                     response_data = await response.json()
@@ -677,23 +708,23 @@ async def forward_request_to_endpoint(content: str, endpoint: str, is_safe: bool
                     # If response is not JSON, read as text
                     response_text = await response.text()
                     response_data = {"response": response_text}
-                
+
                 success = 200 <= response.status < 300
-                
+
                 if success:
-                    logger.info(f"Successfully forwarded request to {endpoint} (status: {response.status})")
+                    logger.info(f"Successfully forwarded request to {url} (status: {response.status})")
                 else:
                     logger.warning(f"Forwarding request failed with status {response.status}: {response_data}")
-                
+
                 return ForwardingResponse(
                     success=success,
                     status_code=response.status,
                     response_data=response_data,
                     error=None if success else f"HTTP {response.status}: {response_data}"
                 )
-                
+
     except aiohttp.ClientError as e:
-        error_msg = f"Network error while forwarding to {endpoint}: {str(e)}"
+        error_msg = f"Network error while forwarding to {url}: {str(e)}"
         logger.error(error_msg)
         return ForwardingResponse(
             success=False,
@@ -702,7 +733,7 @@ async def forward_request_to_endpoint(content: str, endpoint: str, is_safe: bool
             error=error_msg
         )
     except asyncio.TimeoutError:
-        error_msg = f"Timeout while forwarding to {endpoint}"
+        error_msg = f"Timeout while forwarding to {url}"
         logger.error(error_msg)
         return ForwardingResponse(
             success=False,
@@ -711,7 +742,7 @@ async def forward_request_to_endpoint(content: str, endpoint: str, is_safe: bool
             error=error_msg
         )
     except Exception as e:
-        error_msg = f"Unexpected error while forwarding to {endpoint}: {str(e)}"
+        error_msg = f"Unexpected error while forwarding to {url}: {str(e)}"
         logger.error(error_msg, exc_info=True)
         return ForwardingResponse(
             success=False,
@@ -738,7 +769,7 @@ async def scan_message(request: ScanRequest, http_request: Request):
     # Generate unique request ID
     request_id = str(uuid.uuid4())
     start_time = time.time()
-    
+
     # Track the incoming request
     request_data = {
         "id": request_id,
@@ -754,9 +785,9 @@ async def scan_message(request: ScanRequest, http_request: Request):
         "processing_time_ms": None,
         "error": None
     }
-    
+
     logger.info("Received scan request", extra=sanitize_log_data({"content": request.content}))
-    
+
     response = None  # Initialize response variable
     llama_result = None  # Initialize llama_result variable
     try:
@@ -869,49 +900,68 @@ async def scan_message(request: ScanRequest, http_request: Request):
                     detail="Service temporarily unavailable"
                 )
 
-        # Step 4: Forward request if endpoint is provided
-        if request.forward_endpoint:
-            try:
-                logger.debug(f"Forwarding request to: {request.forward_endpoint}")
-                forwarding_result = await forward_request_to_endpoint(
-                    content=request.content,
-                    endpoint=request.forward_endpoint,
-                    is_safe=response.is_safe
-                )
-                
-                # Update response with forwarding result
+        # Step 4: Forward request to all endpoints with forwarding enabled
+        forwarding_enabled_endpoints = await get_forwarding_enabled_endpoints()
+        if forwarding_enabled_endpoints:
+            # Forward to all enabled endpoints
+            forwarding_results = []
+            for endpoint_name, endpoint_config in forwarding_enabled_endpoints:
+                logger.debug(f"Forwarding to endpoint: {endpoint_name}")
+   
+                try:
+                    # Forward the request using the endpoint configuration
+                    forwarding_result = await forward_request_to_endpoint(
+                        content=request.content,
+                        endpoint_url=None,  # Use configuration URL
+                        endpoint_config=endpoint_config,
+                        additional_headers={},  # No additional headers from request
+                        is_safe=response.is_safe
+                    )
+
+                    forwarding_results.append({
+                        "endpoint": endpoint_name,
+                        "result": forwarding_result
+                    })
+
+                    logger.info("Request forwarding completed", extra=sanitize_log_data({
+                        "endpoint": endpoint_name,
+                        "success": forwarding_result.success,
+                        "status_code": forwarding_result.status_code
+                    }))
+
+                except Exception as forward_error:
+                    logger.error(f"Forwarding failed for endpoint {endpoint_name}", exc_info=True, extra=sanitize_log_data({"error": str(forward_error)}))
+                    # Continue with other endpoints even if one fails
+                    forwarding_results.append({
+                        "endpoint": endpoint_name,
+                        "result": ForwardingResponse(
+                            success=False,
+                            status_code=None,
+                            response_data=None,
+                            error=f"Forwarding error: {str(forward_error)}"
+                        )
+                    })
+
+            # Update response with forwarding results (use the first successful result for backward compatibility)
+            main_forwarding_result = None
+            for fr in forwarding_results:
+                if fr["result"].success:
+                    main_forwarding_result = fr["result"]
+                    break
+
+            # If no successful results, use the first result
+            if not main_forwarding_result and forwarding_results:
+                main_forwarding_result = forwarding_results[0]["result"]
+
+            if main_forwarding_result:
                 response = ScanResponse(
                     is_safe=response.is_safe,
                     risk_score=response.risk_score,
                     details=response.details,
                     moderation_results=response.moderation_results,
                     llmguard_results=response.llmguard_results,
-                    forwarding_result=forwarding_result,
+                    forwarding_result=main_forwarding_result,
                     scan_type=f"{response.scan_type}+forwarded"
-                )
-                
-                logger.info("Request forwarding completed", extra=sanitize_log_data({
-                    "endpoint": request.forward_endpoint,
-                    "success": forwarding_result.success,
-                    "status_code": forwarding_result.status_code
-                }))
-                
-            except Exception as e:
-                logger.error("Forwarding failed", exc_info=True, extra=sanitize_log_data({"error": str(e)}))
-                # Don't fail the entire request if forwarding fails
-                response = ScanResponse(
-                    is_safe=response.is_safe,
-                    risk_score=response.risk_score,
-                    details=response.details,
-                    moderation_results=response.moderation_results,
-                    llmguard_results=response.llmguard_results,
-                    forwarding_result=ForwardingResponse(
-                        success=False,
-                        status_code=None,
-                        response_data=None,
-                        error=f"Forwarding error: {str(e)}"
-                    ),
-                    scan_type=f"{response.scan_type}+forwarding_failed"
                 )
 
         return response
@@ -958,7 +1008,7 @@ async def scan_message(request: ScanRequest, http_request: Request):
         # Update request tracking with final result (success or error)
         if request_data["status"] == "processing" and response is not None:
             processing_time = (time.time() - start_time) * 1000
-            
+
             # Extract risks found from the response details
             risks_found = []
             if response.details:
@@ -985,7 +1035,7 @@ async def scan_message(request: ScanRequest, http_request: Request):
                     "reason": "LlamaFirewall scan failed",
                     "is_safe": False
                 }
-            
+
             # Add LLM Guard results if available
             if response.llmguard_results:
                 scan_results["llmguard"] = {
@@ -997,7 +1047,7 @@ async def scan_message(request: ScanRequest, http_request: Request):
                 }
             else:
                 scan_results["llmguard"] = {"enabled": False}
-            
+
             # Add OpenAI Moderation results if available
             if response.moderation_results:
                 moderation_safe = not any(r.flagged for r in response.moderation_results.results)
@@ -1007,7 +1057,7 @@ async def scan_message(request: ScanRequest, http_request: Request):
                         for category, score in result.category_scores.items():
                             if score > 0.5:
                                 flagged_categories[category] = score
-                
+
                 scan_results["openai_moderation"] = {
                     "enabled": True,
                     "is_safe": moderation_safe,
@@ -1016,19 +1066,23 @@ async def scan_message(request: ScanRequest, http_request: Request):
                 }
             else:
                 scan_results["openai_moderation"] = {"enabled": False}
-            
+
             # Add forwarding results if available
             if response.forwarding_result:
+                # Get the endpoint name from the forwarding enabled endpoints
+                forwarding_endpoints = await get_forwarding_enabled_endpoints()
+                endpoint_name = forwarding_endpoints[0][0] if forwarding_endpoints else "unknown"
+
                 scan_results["forwarding"] = {
                     "enabled": True,
-                    "endpoint": request.forward_endpoint,
+                    "endpoint": endpoint_name,
                     "success": response.forwarding_result.success,
                     "status_code": response.forwarding_result.status_code,
                     "error": response.forwarding_result.error
                 }
             else:
                 scan_results["forwarding"] = {"enabled": False}
-            
+
             request_data.update({
                 "status": "success",
                 "processing_time_ms": round(processing_time, 2),
@@ -1044,7 +1098,7 @@ async def scan_message(request: ScanRequest, http_request: Request):
                     "scan_results": scan_results  # Detailed breakdown by system
                 }
             })
-        
+
         # Always add the final request data (even for errors, which are handled in except blocks)
         if request_data["status"] != "processing":  # Only add if status was updated
             await request_tracker.add_request(request_data)
@@ -1058,12 +1112,12 @@ async def web_ui():
 async def get_env_config():
     """Get current environment configuration (sanitized for security)."""
     logger.debug("Environment config requested")
-    
+
     try:
         # Read current .env file if it exists
         env_file_path = ".env"
         config = {}
-        
+
         if os.path.exists(env_file_path):
             with open(env_file_path, 'r') as f:
                 for line in f:
@@ -1073,15 +1127,15 @@ async def get_env_config():
                         # Sanitize sensitive values for display (exclude token limits and other config values)
                         sensitive_patterns = ['_TOKEN', '_KEY', '_SECRET']
                         exclude_patterns = ['_TOKEN_LIMIT', '_LIMIT']
-                        
+
                         is_sensitive = any(pattern in key.upper() for pattern in sensitive_patterns)
                         is_excluded = any(pattern in key.upper() for pattern in exclude_patterns)
-                        
+
                         if is_sensitive and not is_excluded:
                             config[key] = '[REDACTED]' if value and value != 'your_huggingface_token_here' else ''
                         else:
                             config[key] = value
-        
+
         # Provide default values for missing configuration keys
         defaults = {
             'LOG_LEVEL': 'INFO',
@@ -1107,12 +1161,12 @@ async def get_env_config():
             'LLMGUARD_REGEX_PATTERNS': '["^(?!.*password).*$"]',
             'TOKENIZERS_PARALLELISM': 'false'
         }
-        
+
         # Add default values for missing keys
         for key, default_value in defaults.items():
             if key not in config:
                 config[key] = default_value
-        
+
         return ConfigResponse(
             success=True,
             message="Configuration retrieved successfully",
@@ -1141,7 +1195,7 @@ def validate_configuration(config_data: Dict[str, str]) -> None:
         value = config_data.get(field, '')
         if not value or (value in ['', 'your_huggingface_token_here'] and value != '[REDACTED]'):
             raise ValueError(f"{field} is required and cannot be empty")
-    
+
     # Validate numeric fields
     numeric_fields = ['THREAD_POOL_WORKERS', 'LLMGUARD_TOKEN_LIMIT']
     for field in numeric_fields:
@@ -1158,7 +1212,7 @@ def validate_configuration(config_data: Dict[str, str]) -> None:
         valid_log_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
         if config_data['LOG_LEVEL'].upper() not in valid_log_levels:
             raise ValueError(f"LOG_LEVEL must be one of: {', '.join(valid_log_levels)}")
-    
+
     # Validate threshold fields (0.0 to 1.0)
     threshold_fields = [
         'LLMGUARD_TOXICITY_THRESHOLD',
@@ -1174,7 +1228,7 @@ def validate_configuration(config_data: Dict[str, str]) -> None:
                     raise ValueError(f"{field} must be between 0.0 and 1.0")
             except ValueError:
                 raise ValueError(f"{field} must be a valid float between 0.0 and 1.0")
-    
+
     # Validate JSON fields
     json_fields = [
         'LLAMAFIREWALL_SCANNERS',
@@ -1198,17 +1252,17 @@ def validate_configuration(config_data: Dict[str, str]) -> None:
 async def update_env_config(request: ConfigUpdateRequest):
     """Update environment configuration with validation and security checks."""
     logger.info("Environment configuration update requested")
-    
+
     try:
         # Validate configuration data
         config_data = request.config_data
-        
+
         # Ensure all values are strings (convert objects to JSON strings if needed)
         validation_config = {}
         for key, value in config_data.items():
             if not isinstance(key, str):
                 raise ValueError(f"Invalid key: {key}")
-            
+
             # Convert dictionary or list values to JSON strings
             if isinstance(value, (dict, list)):
                 validation_config[key] = json.dumps(value)
@@ -1216,11 +1270,11 @@ async def update_env_config(request: ConfigUpdateRequest):
                 validation_config[key] = str(value)
             else:
                 validation_config[key] = value
-            
+
             # Check for malicious patterns
             if any(pattern in str(validation_config[key]) for pattern in ['../', '..\\', '<script', 'javascript:', 'data:']):
                 raise ValueError(f"Potentially unsafe value for {key}")
-        
+
         # Read existing configuration to preserve sensitive values
         env_file_path = ".env"
         existing_config = {}
@@ -1231,7 +1285,7 @@ async def update_env_config(request: ConfigUpdateRequest):
                     if line and not line.startswith('#') and '=' in line:
                         key, value = line.split('=', 1)
                         existing_config[key] = value
-        
+
         # Merge new config with existing, preserving sensitive values if they weren't actually changed
         merged_config = existing_config.copy()
         for key, value in config_data.items():
@@ -1240,23 +1294,23 @@ async def update_env_config(request: ConfigUpdateRequest):
                 merged_config[key] = existing_config[key]
             else:
                 merged_config[key] = value
-        
+
         # Validate using the new validation function (but skip validation for [REDACTED] values)
         validation_config = {k: v for k, v in merged_config.items() if v != '[REDACTED]'}
         validate_configuration(validation_config)
-        
+
         # Create backup of current .env file
         if os.path.exists(env_file_path):
             shutil.copy2(env_file_path, f"{env_file_path}.backup")
-        
+
         # Write new configuration
         with open(env_file_path, 'w') as f:
             f.write("# LLM Firewall API Configuration\n")
             f.write(f"# Updated: {datetime.now().isoformat()}\n\n")
-            
+
             for key, value in sorted(merged_config.items()):
                 f.write(f"{key}={value}\n")
-        
+
         # Update log level dynamically if it was changed
         if 'LOG_LEVEL' in config_data:
             try:
@@ -1264,14 +1318,14 @@ async def update_env_config(request: ConfigUpdateRequest):
                 logger.info(f"Log level dynamically updated to: {config_data['LOG_LEVEL']}")
             except ValueError as e:
                 logger.warning(f"Failed to update log level: {e}")
-        
+
         logger.info("Environment configuration updated successfully")
         return ConfigResponse(
             success=True,
             message="Configuration updated successfully. Restart the application to apply changes.",
             config=None  # Don't return the full config for security
         )
-        
+
     except ValueError as e:
         logger.error(f"Validation error in configuration update: {e}")
         raise HTTPException(
@@ -1320,10 +1374,10 @@ async def clear_requests():
 async def test_forward_endpoint(request: dict):
     """
     Test a forward endpoint by sending a simple test request.
-    
+
     Args:
         request: Dictionary containing 'endpoint' key with the URL to test
-        
+
     Returns:
         ForwardingResponse with the test result
     """
@@ -1334,23 +1388,24 @@ async def test_forward_endpoint(request: dict):
         if not endpoint:
             raise HTTPException(status_code=400, detail="Endpoint URL is required")
         
-        # Validate the endpoint using the same validation as ScanRequest
+        # Basic URL validation
         try:
-            # Use a temporary ScanRequest to validate the endpoint
-            temp_request = ScanRequest(content="test", forward_endpoint=endpoint)
-            validated_endpoint = temp_request.forward_endpoint
-            if not validated_endpoint:
-                raise ValueError("Endpoint validation failed")
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        
+            from urllib.parse import urlparse
+            parsed = urlparse(endpoint)
+            if not parsed.scheme or not parsed.netloc:
+                raise ValueError("Invalid URL format")
+            if parsed.scheme not in ['http', 'https']:
+                raise ValueError("URL must use HTTP or HTTPS protocol")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid endpoint URL: {str(e)}")
+
         # Send a test request
         test_result = await forward_request_to_endpoint(
             content="This is a test message from LLM Firewall API",
-            endpoint=validated_endpoint,
+            endpoint_url=endpoint,
             is_safe=True
         )
-        
+
         logger.info(f"Forward endpoint test completed: {test_result.success}")
         return test_result
         
@@ -1389,5 +1444,461 @@ async def get_config():
             if "MODERATION" not in config_response["llamafirewall"]["scanners"][role]:
                 config_response["llamafirewall"]["scanners"][role].append("MODERATION")
 
-    logger.debug(f"Returning config: {config_response}")
     return config_response
+
+# Endpoint Configuration Management API Endpoints
+
+@app.post("/api/configurations", status_code=201)
+async def create_configuration(request: CreateConfigurationRequest):
+    """
+    Create a new configuration.
+
+    Args:
+        request: Configuration creation request
+
+    Returns:
+        Dictionary with success status and configuration ID
+    """
+    try:
+        config_manager = await get_config_manager()
+
+        # Special handling for endpoint configurations
+        if request.config_type == "endpoint":
+            # Validate endpoint configuration
+            endpoint_config = EndpointConfiguration(**request.config_data)
+            config_id = await config_manager.create_endpoint_configuration(
+                name=request.name,
+                endpoint_config=endpoint_config,
+                description=request.description,
+                tags=request.tags
+            )
+        else:
+            # General configuration
+            config_id = await config_manager.create_configuration(
+                name=request.name,
+                config_type=request.config_type,
+                config_data=request.config_data,
+                description=request.description,
+                tags=request.tags
+            )
+
+        logger.info(f"Created configuration: {request.name} (ID: {config_id})")
+        return {
+            "success": True,
+            "message": "Configuration created successfully",
+            "config_id": config_id
+        }
+        
+    except ValueError as e:
+        logger.error(f"Validation error creating configuration: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating configuration: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error creating configuration")
+
+@app.get("/api/configurations")
+async def list_configurations(
+    config_type: Optional[str] = None,
+    active_only: bool = True,
+    tags: Optional[str] = None
+):
+    """
+    List configurations with optional filtering.
+
+    Args:
+        config_type: Filter by configuration type
+        active_only: Only return active configurations
+        tags: Comma-separated list of tags to filter by
+
+    Returns:
+        List of configuration records
+    """
+    try:
+        config_manager = await get_config_manager()
+
+        # Parse tags if provided
+        tag_list = None
+        if tags:
+            tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+        
+        configurations = await config_manager.list_configurations(
+            config_type=config_type,
+            active_only=active_only,
+            tags=tag_list
+        )
+
+        return {
+            "success": True,
+            "configurations": [config.model_dump() for config in configurations]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listing configurations: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error listing configurations")
+
+@app.get("/api/configurations/{config_id}")
+async def get_configuration(config_id: str):
+    """
+    Get a configuration by ID.
+
+    Args:
+        config_id: Configuration ID
+
+    Returns:
+        Configuration record
+    """
+    try:
+        config_manager = await get_config_manager()
+        configuration = await config_manager.get_configuration(config_id)
+
+        if not configuration:
+            raise HTTPException(status_code=404, detail="Configuration not found")
+
+        return {
+            "success": True,
+            "configuration": configuration.model_dump()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving configuration: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error retrieving configuration")
+
+@app.get("/api/configurations/by-name/{config_name}")
+async def get_configuration_by_name(config_name: str, config_type: Optional[str] = None):
+    """
+    Get a configuration by name.
+
+    Args:
+        config_name: Configuration name
+        config_type: Optional configuration type filter
+
+    Returns:
+        Configuration record
+    """
+    try:
+        config_manager = await get_config_manager()
+        configuration = await config_manager.get_configuration_by_name(config_name, config_type)
+        
+        if not configuration:
+            raise HTTPException(status_code=404, detail="Configuration not found")
+
+        return {
+            "success": True,
+            "configuration": configuration.model_dump()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving configuration by name: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error retrieving configuration")
+
+@app.put("/api/configurations/{config_id}")
+async def update_configuration(config_id: str, request: UpdateConfigurationRequest):
+    """
+    Update a configuration.
+
+    Args:
+        config_id: Configuration ID
+        request: Update request data
+
+    Returns:
+        Success status
+    """
+    try:
+        config_manager = await get_config_manager()
+
+        # Prepare update data
+        updates = {}
+        if request.name is not None:
+            updates["name"] = request.name
+        if request.description is not None:
+            updates["description"] = request.description
+        if request.config_data is not None:
+            updates["config_data"] = request.config_data
+        if request.is_active is not None:
+            updates["is_active"] = request.is_active
+        if request.tags is not None:
+            updates["tags"] = request.tags
+
+        success = await config_manager.update_configuration(config_id, updates)
+
+        if not success:
+            raise HTTPException(status_code=404, detail="Configuration not found")
+
+        logger.info(f"Updated configuration: {config_id}")
+        return {
+            "success": True,
+            "message": "Configuration updated successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating configuration: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error updating configuration")
+
+@app.delete("/api/configurations/{config_id}")
+async def delete_configuration(config_id: str):
+    """
+    Delete a configuration (soft delete).
+
+    Args:
+        config_id: Configuration ID
+
+    Returns:
+        Success status
+    """
+    try:
+        config_manager = await get_config_manager()
+        success = await config_manager.delete_configuration(config_id)
+
+        if not success:
+            raise HTTPException(status_code=404, detail="Configuration not found")
+
+        logger.info(f"Deleted configuration: {config_id}")
+        return {
+            "success": True,
+            "message": "Configuration deleted successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting configuration: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error deleting configuration")
+
+@app.get("/api/endpoint-configurations")
+async def list_endpoint_configurations():
+    """
+    List all endpoint configurations.
+
+    Returns:
+        List of endpoint configuration records
+    """
+    try:
+        config_manager = await get_config_manager()
+        configurations = await config_manager.list_configurations(
+            config_type="endpoint",
+            active_only=True
+        )
+
+        # Parse endpoint configurations
+        endpoint_configs = []
+        for config in configurations:
+            try:
+                endpoint_config = EndpointConfiguration(**config.config_data)
+                endpoint_configs.append({
+                    "id": config.id,
+                    "name": config.name,
+                    "description": config.description,
+                    "created_at": config.created_at.isoformat(),
+                    "updated_at": config.updated_at.isoformat(),
+                    "tags": config.tags,
+                    "endpoint_config": endpoint_config.model_dump()
+                })
+            except Exception as e:
+                logger.warning(f"Failed to parse endpoint configuration {config.name}: {e}")
+                continue
+        
+        return {
+            "success": True,
+            "endpoint_configurations": endpoint_configs
+        }
+
+    except Exception as e:
+        logger.error(f"Error listing endpoint configurations: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error listing endpoint configurations")
+
+@app.post("/api/endpoint-configurations/test/{config_name}")
+async def test_endpoint_configuration(config_name: str):
+    """
+    Test an endpoint configuration by sending a test request.
+
+    Args:
+        config_name: Name of the endpoint configuration to test
+
+    Returns:
+        Test result
+    """
+    try:
+        config_manager = await get_config_manager()
+        endpoint_config = await config_manager.get_endpoint_configuration(config_name)
+        
+        if not endpoint_config:
+            raise HTTPException(status_code=404, detail="Endpoint configuration not found")
+        
+        # Send test request
+        test_result = await forward_request_to_endpoint(
+            content="This is a test message from LLM Firewall API",
+            endpoint_config=endpoint_config,
+            is_safe=True
+        )
+
+        logger.info(f"Endpoint configuration test completed: {config_name}, success: {test_result.success}")
+        return {
+            "success": True,
+            "test_result": test_result.model_dump(),
+            "configuration_name": config_name
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error testing endpoint configuration: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error testing endpoint configuration")
+
+
+# Endpoint-specific configuration routes for the web UI
+@app.post("/api/configurations/endpoints")
+async def create_endpoint_configuration_web(request: dict):
+    """
+    Create a new endpoint configuration (Web UI specific route).
+
+    Args:
+        request: Dictionary containing name, description, and endpoint_config
+
+    Returns:
+        Configuration details
+    """
+    try:
+        config_manager = await get_config_manager()
+
+        name = request.get("name")
+        description = request.get("description")
+        endpoint_config_data = request.get("endpoint_config", {})
+
+        if not name:
+            raise HTTPException(status_code=400, detail="Configuration name is required")
+
+        # Validate endpoint configuration
+        endpoint_config = EndpointConfiguration(**endpoint_config_data)
+
+        config_id = await config_manager.create_endpoint_configuration(
+            name=name,
+            endpoint_config=endpoint_config,
+            description=description
+        )
+
+        logger.info(f"Created endpoint configuration via web UI: {name}")
+
+        return {
+            "id": config_id,
+            "name": name,
+            "message": "Endpoint configuration created successfully"
+        }
+
+    except ValidationError as e:
+        logger.error(f"Validation error creating endpoint configuration: {e}")
+        raise HTTPException(status_code=400, detail=f"Validation error: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating endpoint configuration: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error creating endpoint configuration")
+
+@app.get("/api/configurations/endpoints/{config_name}")
+async def get_endpoint_configuration_web(config_name: str):
+    """
+    Get an endpoint configuration by name (Web UI specific route).
+
+    Args:
+        config_name: Name of the configuration to retrieve
+
+    Returns:
+        Endpoint configuration data
+    """
+    try:
+        config_manager = await get_config_manager()
+
+        endpoint_config = await config_manager.get_endpoint_configuration(config_name)
+
+        if not endpoint_config:
+            raise HTTPException(status_code=404, detail="Endpoint configuration not found")
+
+        return endpoint_config.model_dump()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving endpoint configuration: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error retrieving endpoint configuration")
+
+@app.put("/api/configurations/endpoints/{config_name}")
+async def update_endpoint_configuration_web(config_name: str, request: dict):
+    """
+    Update an endpoint configuration (Web UI specific route).
+
+    Args:
+        config_name: Name of the configuration to update
+        request: Dictionary containing description and endpoint_config
+
+    Returns:
+        Updated configuration details
+    """
+    try:
+        config_manager = await get_config_manager()
+        
+        description = request.get("description")
+        endpoint_config_data = request.get("endpoint_config", {})
+        
+        # Validate endpoint configuration
+        endpoint_config = EndpointConfiguration(**endpoint_config_data)
+        
+        success = await config_manager.update_endpoint_configuration(
+            name=config_name,
+            endpoint_config=endpoint_config,
+            description=description
+        )
+
+        if not success:
+            raise HTTPException(status_code=404, detail="Endpoint configuration not found")
+        
+        logger.info(f"Updated endpoint configuration via web UI: {config_name}")
+        
+        return {
+            "name": config_name,
+            "message": "Endpoint configuration updated successfully"
+        }
+
+    except ValidationError as e:
+        logger.error(f"Validation error updating endpoint configuration: {e}")
+        raise HTTPException(status_code=400, detail=f"Validation error: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating endpoint configuration: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error updating endpoint configuration")
+
+@app.delete("/api/configurations/endpoints/{config_name}")
+async def delete_endpoint_configuration_web(config_name: str):
+    """
+    Delete an endpoint configuration (Web UI specific route).
+
+    Args:
+        config_name: Name of the configuration to delete
+
+    Returns:
+        Deletion confirmation
+    """
+    try:
+        config_manager = await get_config_manager()
+
+        success = await config_manager.delete_endpoint_configuration(config_name)
+
+        if not success:
+            raise HTTPException(status_code=404, detail="Endpoint configuration not found")
+
+        logger.info(f"Deleted endpoint configuration via web UI: {config_name}")
+
+        return {
+            "message": f"Endpoint configuration '{config_name}' deleted successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting endpoint configuration: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error deleting endpoint configuration")
