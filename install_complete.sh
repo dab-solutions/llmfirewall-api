@@ -89,7 +89,7 @@ print_step "Installing LLM Guard dependencies (handling conflicts)"
 
 # Install LLM Guard without dependencies first
 echo "   Installing llm-guard (no dependencies)..."
-pip install --no-deps llm-guard>=0.3.0
+pip install --no-deps "llm-guard>=0.3.0"
 print_success "llm-guard package installed"
 
 # Install presidio for privacy protection
