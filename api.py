@@ -694,11 +694,11 @@ async def perform_llmguard_scan(content: str) -> Tuple[str, Dict[str, bool], Dic
         return content, {}, {}
 
 async def forward_request_to_endpoint(
-    content: str, 
+    content: str,
+    scan_results: ScanResponse,
     endpoint_url: Optional[str] = None,
     endpoint_config: Optional[EndpointConfiguration] = None,
     additional_headers: Optional[Dict[str, str]] = None,
-    is_safe: bool = True
 ) -> ForwardingResponse:
     """
     Forward the scanned content to the specified endpoint using configuration.
@@ -708,7 +708,7 @@ async def forward_request_to_endpoint(
         endpoint_url: Direct URL to forward to (overrides config)
         endpoint_config: EndpointConfiguration object with forwarding settings
         additional_headers: Additional headers to include
-        is_safe: Whether the content was deemed safe by scanning
+        scan_results: Results of the scanning
 
     Returns:
         ForwardingResponse containing the result of the forwarding operation
@@ -743,7 +743,7 @@ async def forward_request_to_endpoint(
             raise ValueError("Either endpoint_url or endpoint_config must be provided")
 
         # Check if we should forward unsafe content
-        if not is_safe and not forward_on_unsafe:
+        if not scan_results.is_safe and not forward_on_unsafe:
             logger.info(f"Skipping forwarding to {url} because content is unsafe and forward_on_unsafe=False")
             return ForwardingResponse(
                 success=False,
@@ -768,7 +768,7 @@ async def forward_request_to_endpoint(
 
         # Include scan results if configured
         if include_scan_results:
-            payload["is_safe"] = is_safe
+            payload["scan_results"] = scan_results.model_dump()
 
         # Set up HTTP client with security configurations
         timeout = aiohttp.ClientTimeout(total=timeout_seconds)
@@ -1006,7 +1006,7 @@ async def scan_message(request: ScanRequest, http_request: Request):
                         endpoint_url=None,  # Use configuration URL
                         endpoint_config=endpoint_config,
                         additional_headers={},  # No additional headers from request
-                        is_safe=response.is_safe
+                        scan_results=response
                     )
 
                     forwarding_results.append({
@@ -1518,7 +1518,7 @@ async def test_forward_endpoint(request: dict):
         test_result = await forward_request_to_endpoint(
             content="This is a test message from LLM Firewall API",
             endpoint_url=endpoint,
-            is_safe=True
+            scan_results=ScanResponse(is_safe=True, details={"message": "Test scan completed successfully"}, scan_type="test")
         )
 
         logger.info(f"Forward endpoint test completed: {test_result.success}")
@@ -1855,7 +1855,7 @@ async def test_endpoint_configuration(config_name: str):
         test_result = await forward_request_to_endpoint(
             content="This is a test message from LLM Firewall API",
             endpoint_config=endpoint_config,
-            is_safe=True
+            scan_results=ScanResponse(is_safe=True, details={"message": "Test scan completed successfully"}, scan_type="test")
         )
 
         logger.info(f"Endpoint configuration test completed: {config_name}, success: {test_result.success}")
