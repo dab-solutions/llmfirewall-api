@@ -1518,18 +1518,19 @@ class RequestMonitor {
         }
 
         // Clear button
-        const clearBtn = document.getElementById('clear-requests');
+        const clearBtn = document.getElementById('clearRequests');
         if (clearBtn) {
             clearBtn.addEventListener('click', () => {
                 this.clearRequests();
+                announceToScreenReader('Requests cleared');
             });
         }
 
         // Auto-refresh toggle
-        const autoRefreshToggle = document.getElementById('auto-refresh');
+        const autoRefreshToggle = document.getElementById('autoRefreshToggle');
         if (autoRefreshToggle) {
-            autoRefreshToggle.addEventListener('change', (e) => {
-                this.toggleAutoRefresh(e.target.checked);
+            autoRefreshToggle.addEventListener('click', (e) => {
+                this.toggleAutoRefresh();
             });
         }
 
@@ -1588,6 +1589,9 @@ class RequestMonitor {
      * Clear all requests
      */
     async clearRequests() {
+        console.log('Clearing all requests...');
+
+        // Confirm with user before clearing
         if (!confirm('Are you sure you want to clear all request history? This action cannot be undone.')) {
             return;
         }
@@ -1596,15 +1600,28 @@ class RequestMonitor {
             this.updateLoadingState(true);
             
             const response = await fetch('/api/requests/clear', {
-                method: 'POST'
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
             });
             
             if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                const errorText = await response.text();
+                throw new Error(`HTTP ${response.status}: ${errorText}`);
             }
             
-            await this.loadRequests(); // Refresh the display
-            announceToScreenReader('All requests cleared');
+            const result = await response.json();
+            console.log('Clear requests result:', result);
+            
+            // Clear the UI immediately
+            this.clearRequestsDisplay();
+            
+            // Refresh the display to ensure sync with backend
+            await this.loadRequests();
+            
+            announceToScreenReader('All requests cleared successfully');
+            this.showSuccess('Request history cleared successfully');
             
         } catch (error) {
             console.error('Error clearing requests:', error);
@@ -2030,15 +2047,25 @@ class RequestMonitor {
     /**
      * Toggle auto-refresh functionality
      */
-    toggleAutoRefresh(enabled) {
+    toggleAutoRefresh(enabled = null) {
+        // If no parameter provided, toggle current state
+        if (enabled === null) {
+            enabled = !this.isAutoRefreshEnabled;
+        }
+        
         this.isAutoRefreshEnabled = enabled;
+        
+        const toggleButton = document.getElementById('autoRefreshToggle');
         
         if (enabled) {
             this.autoRefreshInterval = setInterval(() => {
                 this.loadRequests();
             }, this.refreshIntervalMs);
             
-            document.getElementById('auto-refresh-status')?.classList.add('active');
+            if (toggleButton) {
+                toggleButton.innerHTML = '⏸️ Auto-Refresh: ON';
+                toggleButton.classList.add('active');
+            }
             announceToScreenReader('Auto-refresh enabled');
         } else {
             if (this.autoRefreshInterval) {
@@ -2046,7 +2073,10 @@ class RequestMonitor {
                 this.autoRefreshInterval = null;
             }
             
-            document.getElementById('auto-refresh-status')?.classList.remove('active');
+            if (toggleButton) {
+                toggleButton.innerHTML = '▶️ Auto-Refresh: OFF';
+                toggleButton.classList.remove('active');
+            }
             announceToScreenReader('Auto-refresh disabled');
         }
     }
@@ -2069,7 +2099,7 @@ class RequestMonitor {
      */
     updateLoadingState(isLoading) {
         const refreshBtn = document.getElementById('refreshRequests');
-        const clearBtn = document.getElementById('clear-requests');
+        const clearBtn = document.getElementById('clearRequests');
         const loadingIndicator = document.getElementById('loading-indicator');
 
         if (refreshBtn) {
@@ -2093,6 +2123,8 @@ class RequestMonitor {
         const errorContainer = document.getElementById('monitoring-errors');
         if (!errorContainer) return;
 
+        errorContainer.style.display = 'block';
+
         const errorElement = document.createElement('div');
         errorElement.className = 'error-message';
         errorElement.setAttribute('role', 'alert');
@@ -2108,6 +2140,9 @@ class RequestMonitor {
         setTimeout(() => {
             if (errorElement.parentNode) {
                 errorElement.parentNode.removeChild(errorElement);
+                if (errorContainer.children.length === 0) {
+                    errorContainer.style.display = 'none';
+                }
             }
         }, 5000);
 
@@ -2115,8 +2150,71 @@ class RequestMonitor {
         errorElement.querySelector('.error-dismiss').addEventListener('click', () => {
             if (errorElement.parentNode) {
                 errorElement.parentNode.removeChild(errorElement);
+                if (errorContainer.children.length === 0) {
+                    errorContainer.style.display = 'none';
+                }
             }
         });
+    }
+
+    /**
+     * Show success message
+     */
+    showSuccess(message) {
+        const errorContainer = document.getElementById('monitoring-errors');
+        if (!errorContainer) return;
+
+        errorContainer.style.display = 'block';
+
+        const successElement = document.createElement('div');
+        successElement.className = 'success-message';
+        successElement.setAttribute('role', 'status');
+        successElement.innerHTML = `
+            <span class="success-icon" aria-hidden="true">✅</span>
+            <span class="success-text">${this.escapeHtml(message)}</span>
+            <button class="success-dismiss" aria-label="Dismiss message">×</button>
+        `;
+
+        errorContainer.appendChild(successElement);
+
+        // Auto-dismiss after 3 seconds
+        setTimeout(() => {
+            if (successElement.parentNode) {
+                successElement.parentNode.removeChild(successElement);
+                if (errorContainer.children.length === 0) {
+                    errorContainer.style.display = 'none';
+                }
+            }
+        }, 3000);
+
+        // Manual dismiss
+        successElement.querySelector('.success-dismiss').addEventListener('click', () => {
+            if (successElement.parentNode) {
+                successElement.parentNode.removeChild(successElement);
+                if (errorContainer.children.length === 0) {
+                    errorContainer.style.display = 'none';
+                }
+            }
+        });
+    }
+
+    /**
+     * Clear the requests display immediately
+     */
+    clearRequestsDisplay() {
+        const requestsList = document.getElementById('requestsList');
+        if (requestsList) {
+            requestsList.innerHTML = '<div class="empty-state">No requests found</div>';
+        }
+
+        // Reset stats
+        const totalRequests = document.getElementById('totalRequests');
+        const successRate = document.getElementById('successRate');
+        const avgResponseTime = document.getElementById('avgResponseTime');
+
+        if (totalRequests) totalRequests.textContent = '0';
+        if (successRate) successRate.textContent = '0%';
+        if (avgResponseTime) avgResponseTime.textContent = '0ms';
     }
 
     /**

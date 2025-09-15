@@ -589,6 +589,76 @@ textarea:focus-visible {
     flex-wrap: wrap;
 }
 
+/* Error and Success Messages in Monitoring */
+.error-container {
+    margin: 1rem 0;
+    padding: 0;
+}
+
+.error-container .error-message,
+.error-container .success-message {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    border-radius: 0.375rem;
+    position: relative;
+    font-size: 0.875rem;
+    animation: slideIn 0.3s ease-out;
+}
+
+.error-container .error-message {
+    background-color: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #dc2626;
+}
+
+.error-container .success-message {
+    background-color: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    color: #16a34a;
+}
+
+.error-container .error-icon,
+.error-container .success-icon {
+    font-size: 1rem;
+    flex-shrink: 0;
+}
+
+.error-container .error-text,
+.error-container .success-text {
+    flex: 1;
+}
+
+.error-container .error-dismiss,
+.error-container .success-dismiss {
+    background: none;
+    border: none;
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0.25rem;
+    color: inherit;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.error-container .error-dismiss:hover,
+.error-container .success-dismiss:hover {
+    opacity: 1;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 .stats-group {
     display: flex;
     gap: 1.5rem;
