@@ -118,7 +118,13 @@ install_package "datasets" "HuggingFace datasets"
 install_package "evaluate" "HuggingFace evaluate"
 install_package "accelerate" "HuggingFace accelerate"
 
-# Step 5: Verify installations
+# Step 5: Install Azure AI Content Safety SDK
+print_step "Installing Azure AI Content Safety SDK"
+install_package "azure-ai-content-safety>=1.0.0" "Azure AI Content Safety SDK"
+install_package "azure-identity>=1.15.0" "Azure Identity"
+install_package "azure-core>=1.29.0" "Azure Core"
+
+# Step 6: Verify installations
 print_step "Verifying installations"
 
 echo "   Testing FastAPI..."
@@ -147,7 +153,7 @@ else
     print_warning "api.py not found in current directory"
 fi
 
-# Step 6: Final summary
+# Step 7: Final summary
 echo ""
 echo -e "${GREEN}🎉 Installation Complete!${NC}"
 echo "=========================="

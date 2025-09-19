@@ -23,6 +23,21 @@ import time
 import aiohttp
 from urllib.parse import urlparse
 
+# Azure AI Content Safety imports - conditionally imported
+try:
+    from azure.ai.contentsafety import ContentSafetyClient
+    from azure.ai.contentsafety.models import AnalyzeTextOptions, TextCategory
+    from azure.core.credentials import AzureKeyCredential
+    from azure.core.exceptions import HttpResponseError
+    AZURE_CONTENT_SAFETY_AVAILABLE = True
+except ImportError:
+    AZURE_CONTENT_SAFETY_AVAILABLE = False
+    ContentSafetyClient = None
+    AnalyzeTextOptions = None
+    TextCategory = None
+    AzureKeyCredential = None
+    HttpResponseError = None
+
 # Import configuration manager
 from config_manager import (
     ConfigurationManager, EndpointConfiguration, ConfigurationRecord,
@@ -220,6 +235,11 @@ SCANNER_CONFIG = {}
 llamafirewall = None
 async_client = None
 
+# Azure AI Content Safety configuration
+AZURE_CONTENT_SAFETY_ENABLED = False
+azure_content_safety_client = None
+AZURE_CONTENT_SAFETY_CONFIG = {}
+
 # Configuration reload tracking
 config_reload_in_progress = False
 config_reload_last_status = "ready"
@@ -403,6 +423,63 @@ def parse_scanners_config() -> Dict[Role, List[ScannerType]]:
     logger.info("Scanner configuration loaded successfully")
     return scanners if scanners else default_config
 
+def parse_azure_content_safety_config() -> Tuple[bool, Any, Dict[str, Any]]:
+    """
+    Parse Azure AI Content Safety configuration from environment variables.
+
+    Returns:
+        Tuple of (enabled, client, config)
+    """
+    global AZURE_CONTENT_SAFETY_ENABLED
+
+    # Check if Azure Content Safety is enabled
+    enabled = os.getenv("AZURE_CONTENT_SAFETY_ENABLED", "false").lower() == "true"
+
+    if not enabled:
+        logger.info("Azure AI Content Safety is disabled")
+        return False, None, {}
+
+    if not AZURE_CONTENT_SAFETY_AVAILABLE:
+        logger.warning("Azure AI Content Safety is enabled but the azure-ai-contentsafety package is not installed")
+        return False, None, {}
+
+    # Get Azure configuration
+    endpoint = os.getenv("AZURE_CONTENT_SAFETY_ENDPOINT", "")
+    key = os.getenv("AZURE_CONTENT_SAFETY_KEY", "")
+
+    if not endpoint or not key:
+        logger.warning("Azure AI Content Safety is enabled but AZURE_CONTENT_SAFETY_ENDPOINT or AZURE_CONTENT_SAFETY_KEY is missing")
+        return False, None, {}
+
+    # Validate endpoint format
+    if not endpoint.startswith(("https://", "http://")):
+        logger.error("Azure Content Safety endpoint must be a valid URL")
+        return False, None, {}
+
+    try:
+        # Initialize Azure Content Safety client
+        credential = AzureKeyCredential(key)
+        client = ContentSafetyClient(endpoint, credential)
+
+        # Build configuration
+        config = {
+            'endpoint': endpoint,
+            'text_enabled': os.getenv("AZURE_CONTENT_SAFETY_TEXT_ENABLED", "true").lower() == "true",
+            'jailbreak_enabled': os.getenv("AZURE_CONTENT_SAFETY_JAILBREAK_ENABLED", "true").lower() == "true",
+            'hate_threshold': int(os.getenv("AZURE_CONTENT_SAFETY_HATE_THRESHOLD", "0")),  # 0-7, 0 means most strict
+            'selfharm_threshold': int(os.getenv("AZURE_CONTENT_SAFETY_SELFHARM_THRESHOLD", "0")),
+            'sexual_threshold': int(os.getenv("AZURE_CONTENT_SAFETY_SEXUAL_THRESHOLD", "0")),
+            'violence_threshold': int(os.getenv("AZURE_CONTENT_SAFETY_VIOLENCE_THRESHOLD", "0")),
+            'jailbreak_threshold': float(os.getenv("AZURE_CONTENT_SAFETY_JAILBREAK_THRESHOLD", "0.5")),  # 0.0-1.0
+        }
+
+        logger.info(f"Azure AI Content Safety initialized successfully with endpoint: {endpoint}")
+        return True, client, config
+
+    except Exception as e:
+        logger.error(f"Failed to initialize Azure AI Content Safety client: {e}")
+        return False, None, {}
+
 async def reload_configuration():
     """
     Reload application configuration from environment variables.
@@ -410,6 +487,7 @@ async def reload_configuration():
     """
     global moderation, LLMGUARD_ENABLED, LLMGUARD_SCANNERS, LLMGUARD_CONFIG
     global SCANNER_CONFIG, llamafirewall, async_client
+    global AZURE_CONTENT_SAFETY_ENABLED, azure_content_safety_client, AZURE_CONTENT_SAFETY_CONFIG
     global config_reload_in_progress, config_reload_last_status
 
     if config_reload_in_progress:
@@ -452,6 +530,14 @@ async def reload_configuration():
         else:
             logger.info("OpenAI moderation disabled")
             async_client = None
+
+        # Parse and update Azure AI Content Safety configuration
+        logger.info("Reloading Azure AI Content Safety configuration")
+        AZURE_CONTENT_SAFETY_ENABLED, azure_content_safety_client, AZURE_CONTENT_SAFETY_CONFIG = parse_azure_content_safety_config()
+        if AZURE_CONTENT_SAFETY_ENABLED:
+            logger.info("Azure AI Content Safety enabled")
+        else:
+            logger.info("Azure AI Content Safety disabled")
 
         config_reload_last_status = "success"
         logger.info("Configuration reload completed successfully")
@@ -501,6 +587,14 @@ try:
         async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
     else:
         async_client = None
+
+    # Initialize Azure AI Content Safety if enabled
+    logger.info("Initializing Azure AI Content Safety configuration")
+    AZURE_CONTENT_SAFETY_ENABLED, azure_content_safety_client, AZURE_CONTENT_SAFETY_CONFIG = parse_azure_content_safety_config()
+    if AZURE_CONTENT_SAFETY_ENABLED:
+        logger.info("Azure AI Content Safety enabled")
+    else:
+        logger.info("Azure AI Content Safety disabled")
 
     config_reload_last_status = "initialized"
 
@@ -595,10 +689,215 @@ class ScanResponse(BaseModel):
     details: Optional[Dict[str, Any]] = None
     moderation_results: Optional[OpenAIModerationResponse] = None
     llmguard_results: Optional[Dict[str, Any]] = None
+    azure_results: Optional[Dict[str, Any]] = None
     forwarding_result: Optional[ForwardingResponse] = None
     scan_type: str
 
     model_config = {"frozen": True}
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    reraise=True
+)
+async def perform_azure_jailbreak_detection(user_prompt: str, documents: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Perform Azure AI Content Safety jailbreak detection using REST API.
+
+    Args:
+        user_prompt: The user input to analyze for jailbreak attacks
+        documents: Optional list of document strings to analyze
+
+    Returns:
+        Dictionary containing jailbreak detection results
+    """
+    if not AZURE_CONTENT_SAFETY_ENABLED or not AZURE_CONTENT_SAFETY_CONFIG:
+        return {"enabled": False, "userPromptAnalysis": None, "documentsAnalysis": None}
+
+    if documents is None:
+        documents = []
+
+    try:
+        # Get configuration
+        endpoint = AZURE_CONTENT_SAFETY_CONFIG.get('endpoint', '')
+        key = os.getenv("AZURE_CONTENT_SAFETY_KEY", "")  # Get key from environment for security
+
+        if not endpoint or not key:
+            logger.error("Azure Content Safety endpoint or key missing for jailbreak detection")
+            return {"enabled": False, "error": "Missing configuration"}
+
+        # Construct the REST API URL
+        # Remove trailing slash from endpoint if present
+        base_endpoint = endpoint.rstrip('/')
+        api_url = f"{base_endpoint}/contentsafety/text:shieldPrompt?api-version=2024-09-01"
+
+        # Prepare request headers with authentication
+        headers = {
+            'Ocp-Apim-Subscription-Key': key,
+            'Content-Type': 'application/json'
+        }
+
+        # Prepare request body
+        request_body = {
+            'userPrompt': user_prompt,
+            'documents': documents
+        }
+
+        logger.debug(f"Making Azure jailbreak detection request to: {api_url}")
+        logger.debug(f"Request body: userPrompt length={len(user_prompt)}, documents count={len(documents)}")
+
+        # Make the HTTP request
+        async with aiohttp.ClientSession() as session:
+            async with session.post(api_url, headers=headers, json=request_body) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    logger.debug(f"Azure jailbreak detection successful: {result}")
+                    return result
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Azure jailbreak detection failed with status {response.status}: {error_text}")
+                    return {
+                        "enabled": False,
+                        "error": f"HTTP {response.status}: {error_text}",
+                        "userPromptAnalysis": None,
+                        "documentsAnalysis": None
+                    }
+
+    except Exception as e:
+        logger.error(f"Azure jailbreak detection request failed: {e}", exc_info=True)
+        return {
+            "enabled": False,
+            "error": str(e),
+            "userPromptAnalysis": None,
+            "documentsAnalysis": None
+        }
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    reraise=True
+)
+async def perform_azure_content_safety_scan(content: str) -> Dict[str, Any]:
+    """
+    Perform Azure AI Content Safety scanning with retry logic.
+
+    Returns:
+        Dictionary containing text analysis and jailbreak detection results
+    """
+    if not AZURE_CONTENT_SAFETY_ENABLED or azure_content_safety_client is None:
+        return {"enabled": False, "text_result": None, "jailbreak_result": None}
+
+    results = {
+        "enabled": True,
+        "text_result": None,
+        "jailbreak_result": None,
+        "is_safe": True,
+        "flagged_categories": [],
+        "severity_scores": {}
+    }
+    
+    try:
+        logger.debug("Performing Azure AI Content Safety scan", extra=sanitize_log_data({"content": content}))
+
+        # Perform text content safety analysis
+        if AZURE_CONTENT_SAFETY_CONFIG.get('text_enabled', True):
+            try:
+                text_request = AnalyzeTextOptions(text=content)
+                text_response = azure_content_safety_client.analyze_text(text_request)
+
+                # Convert Azure response to serializable format
+                text_result_dict = {
+                    "categories_analysis": []
+                }
+
+                # Extract category analysis data
+                for category_result in text_response.categories_analysis:
+                    text_result_dict["categories_analysis"].append({
+                        "category": str(category_result.category),
+                        "severity": category_result.severity
+                    })
+
+                results["text_result"] = text_result_dict
+
+                # Check each category against thresholds
+                config = AZURE_CONTENT_SAFETY_CONFIG
+                logger.debug(f"Azure Content Safety config thresholds: {config}")
+                text_is_safe = True
+
+                for category_result in text_response.categories_analysis:
+                    category_name = category_result.category.lower()
+                    severity = category_result.severity
+
+                    # Get threshold for this category
+                    threshold_key = f"{category_name}_threshold"
+                    threshold = config.get(threshold_key, 0)
+                    logger.debug(f"Azure Content Safety check: {category_name} severity={severity} vs threshold={threshold}")
+
+                    results["severity_scores"][category_name] = severity
+                    if severity >= threshold:
+                        text_is_safe = False
+                        results["flagged_categories"].append({
+                            "category": category_name,
+                            "severity": severity,
+                            "threshold": threshold
+                        })
+
+                if not text_is_safe:
+                    results["is_safe"] = False
+                    logger.warning(f"Azure Content Safety: Text flagged for categories: {[f['category'] for f in results['flagged_categories']]}")
+
+            except Exception as e:
+                logger.error(f"Azure Content Safety text analysis failed: {e}")
+                # Don't fail the entire request, just log and continue
+
+        # Perform jailbreak detection using REST API (not available in SDK)
+        if AZURE_CONTENT_SAFETY_CONFIG.get('jailbreak_enabled', True):
+            try:
+                jailbreak_result = await perform_azure_jailbreak_detection(content, [])
+                results["jailbreak_result"] = jailbreak_result
+
+                # Check if jailbreak attack was detected in user prompt
+                if jailbreak_result and jailbreak_result.get("userPromptAnalysis", {}).get("attackDetected", False):
+                    results["is_safe"] = False
+                    results["flagged_categories"].append({
+                        "category": "jailbreak_user_prompt",
+                        "severity": 1,  # Binary detection
+                        "threshold": AZURE_CONTENT_SAFETY_CONFIG.get('jailbreak_threshold', 0.5)  # Use configured threshold
+                    })
+                    logger.warning("Azure Content Safety: Jailbreak attack detected in user prompt")
+
+                # Check if jailbreak attack was detected in documents
+                documents_analysis = jailbreak_result.get("documentsAnalysis", [])
+                if documents_analysis:
+                    for i, doc_analysis in enumerate(documents_analysis):
+                        if doc_analysis.get("attackDetected", False):
+                            results["is_safe"] = False
+                            results["flagged_categories"].append({
+                                "category": f"jailbreak_document_{i}",
+                                "severity": 1,  # Binary detection
+                                "threshold": AZURE_CONTENT_SAFETY_CONFIG.get('jailbreak_threshold', 0.5)  # Use configured threshold
+                            })
+                            logger.warning(f"Azure Content Safety: Jailbreak attack detected in document {i}")
+
+            except Exception as e:
+                logger.error(f"Azure Content Safety jailbreak detection failed: {e}")
+                # Don't fail the entire request, just log and continue
+
+        logger.debug(f"Azure Content Safety scan completed. Safe: {results['is_safe']}")
+        return results
+
+    except Exception as e:
+        logger.error(f"Azure Content Safety scan failed: {e}", exc_info=True)
+        # Return a safe fallback result
+        return {
+            "enabled": True,
+            "text_result": None,
+            "jailbreak_result": None,
+            "is_safe": True,  # Fail safe
+            "flagged_categories": [],
+            "severity_scores": {},
+            "error": str(e)
+        }
 
 @retry(
     stop=stop_after_attempt(3),
@@ -945,11 +1244,50 @@ async def scan_message(request: ScanRequest, http_request: Request):
             risk_score=llama_result.score,
             details=details,
             llmguard_results=llmguard_results,
+            azure_results=None,  # Will be updated if Azure scanning is performed
             forwarding_result=None,  # Will be updated if forwarding is requested
             scan_type="+".join(scan_types)
         )
 
-        # Step 3: Perform OpenAI moderation if enabled
+        # Step 3: Perform Azure AI Content Safety scan if enabled
+        azure_results = None
+        if AZURE_CONTENT_SAFETY_ENABLED:
+            try:
+                logger.debug("Starting Azure AI Content Safety scan")
+                azure_results = await perform_azure_content_safety_scan(request.content)
+
+                if azure_results and azure_results.get("enabled"):
+                    scan_types.append("azure")
+                    azure_safe = azure_results.get("is_safe", True)
+
+                    # Update overall safety status
+                    is_safe = is_safe and azure_safe
+
+                    # Update response details with Azure results
+                    updated_details = dict(response.details) if response.details else {}
+                    if not azure_safe:
+                        updated_details["azure_flagged"] = azure_results.get("flagged_categories", [])
+                        updated_details["azure_severity"] = azure_results.get("severity_scores", {})
+
+                    response = ScanResponse(
+                        is_safe=is_safe,
+                        risk_score=response.risk_score,
+                        details=updated_details,
+                        llmguard_results=response.llmguard_results,
+                        azure_results=azure_results,
+                        forwarding_result=response.forwarding_result,
+                        scan_type="+".join(scan_types)
+                    )
+
+                    logger.info("Azure AI Content Safety scan completed", extra=sanitize_log_data({
+                        "azure_safe": azure_safe,
+                        "flagged_categories": len(azure_results.get("flagged_categories", []))
+                    }))
+
+            except Exception as e:
+                logger.error("Azure AI Content Safety scan failed, continuing without it", exc_info=True, extra=sanitize_log_data({"error": str(e)}))
+
+        # Step 4: Perform OpenAI moderation if enabled
         if moderation:
             try:
                 logger.debug("Starting OpenAI moderation")
@@ -975,6 +1313,7 @@ async def scan_message(request: ScanRequest, http_request: Request):
                     details=updated_details,
                     moderation_results=moderation_response,
                     llmguard_results=response.llmguard_results,
+                    azure_results=response.azure_results,
                     forwarding_result=response.forwarding_result,
                     scan_type=f"{response.scan_type}+openai_moderation"
                 )
@@ -991,7 +1330,7 @@ async def scan_message(request: ScanRequest, http_request: Request):
                     detail="Service temporarily unavailable"
                 )
 
-        # Step 4: Forward request to all endpoints with forwarding enabled
+        # Step 5: Forward request to all endpoints with forwarding enabled
         forwarding_enabled_endpoints = await get_forwarding_enabled_endpoints()
         if forwarding_enabled_endpoints:
             # Forward to all enabled endpoints
@@ -1051,6 +1390,7 @@ async def scan_message(request: ScanRequest, http_request: Request):
                     details=response.details,
                     moderation_results=response.moderation_results,
                     llmguard_results=response.llmguard_results,
+                    azure_results=response.azure_results,
                     forwarding_result=main_forwarding_result,
                     scan_type=f"{response.scan_type}+forwarded"
                 )
@@ -1138,6 +1478,19 @@ async def scan_message(request: ScanRequest, http_request: Request):
                 }
             else:
                 scan_results["llmguard"] = {"enabled": False}
+
+            # Add Azure AI Content Safety results if available
+            if response.azure_results:
+                scan_results["azure"] = {
+                    "enabled": True,
+                    "is_safe": response.azure_results.get("is_safe", True),
+                    "flagged_categories": response.azure_results.get("flagged_categories", []),
+                    "severity_scores": response.azure_results.get("severity_scores", {}),
+                    "text_enabled": AZURE_CONTENT_SAFETY_CONFIG.get('text_enabled', True),
+                    "jailbreak_enabled": AZURE_CONTENT_SAFETY_CONFIG.get('jailbreak_enabled', True)
+                }
+            else:
+                scan_results["azure"] = {"enabled": False}
 
             # Add OpenAI Moderation results if available
             if response.moderation_results:
@@ -1250,7 +1603,18 @@ async def get_env_config():
             'LLMGUARD_BANNED_TOPICS': '["violence", "illegal"]',
             'LLMGUARD_VALID_LANGUAGES': '["en"]',
             'LLMGUARD_REGEX_PATTERNS': '["^(?!.*password).*$"]',
-            'TOKENIZERS_PARALLELISM': 'false'
+            'TOKENIZERS_PARALLELISM': 'false',
+            # Azure AI Content Safety configuration
+            'AZURE_CONTENT_SAFETY_ENABLED': 'false',
+            'AZURE_CONTENT_SAFETY_ENDPOINT': '',
+            'AZURE_CONTENT_SAFETY_KEY': '',
+            'AZURE_CONTENT_SAFETY_TEXT_ENABLED': 'true',
+            'AZURE_CONTENT_SAFETY_JAILBREAK_ENABLED': 'true',
+            'AZURE_CONTENT_SAFETY_HATE_THRESHOLD': '0',
+            'AZURE_CONTENT_SAFETY_SELFHARM_THRESHOLD': '0',
+            'AZURE_CONTENT_SAFETY_SEXUAL_THRESHOLD': '0',
+            'AZURE_CONTENT_SAFETY_VIOLENCE_THRESHOLD': '0',
+            'AZURE_CONTENT_SAFETY_JAILBREAK_THRESHOLD': '0.5'
         }
 
         # Add default values for missing keys
@@ -1288,16 +1652,22 @@ def validate_configuration(config_data: Dict[str, str]) -> None:
             raise ValueError(f"{field} is required and cannot be empty")
 
     # Validate numeric fields
-    numeric_fields = ['THREAD_POOL_WORKERS', 'LLMGUARD_TOKEN_LIMIT']
+    numeric_fields = ['THREAD_POOL_WORKERS', 'LLMGUARD_TOKEN_LIMIT', 
+                     'AZURE_CONTENT_SAFETY_HATE_THRESHOLD', 'AZURE_CONTENT_SAFETY_SELFHARM_THRESHOLD',
+                     'AZURE_CONTENT_SAFETY_SEXUAL_THRESHOLD', 'AZURE_CONTENT_SAFETY_VIOLENCE_THRESHOLD']
     for field in numeric_fields:
         if field in config_data:
             try:
                 value = int(config_data[field])
-                if value <= 0:
-                    raise ValueError(f"{field} must be a positive integer")
-            except ValueError:
-                raise ValueError(f"{field} must be a valid positive integer")
-    
+                if value < 0:  # Azure thresholds can be 0-7
+                    raise ValueError(f"{field} must be a non-negative integer")
+                if field.startswith('AZURE_CONTENT_SAFETY_') and field.endswith('_THRESHOLD') and value > 7:
+                    raise ValueError(f"{field} must be between 0 and 7")
+            except ValueError as ve:
+                if "invalid literal" in str(ve):
+                    raise ValueError(f"{field} must be a valid integer")
+                raise ve
+
     # Validate LOG_LEVEL
     if 'LOG_LEVEL' in config_data:
         valid_log_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
@@ -1309,7 +1679,8 @@ def validate_configuration(config_data: Dict[str, str]) -> None:
         'LLMGUARD_TOXICITY_THRESHOLD',
         'LLMGUARD_PROMPT_INJECTION_THRESHOLD',
         'LLMGUARD_SENTIMENT_THRESHOLD',
-        'LLMGUARD_BIAS_THRESHOLD'
+        'LLMGUARD_BIAS_THRESHOLD',
+        'AZURE_CONTENT_SAFETY_JAILBREAK_THRESHOLD'
     ]
     for field in threshold_fields:
         if field in config_data:
@@ -1338,6 +1709,31 @@ def validate_configuration(config_data: Dict[str, str]) -> None:
                 json.loads(config_data[field])
             except json.JSONDecodeError:
                 raise ValueError(f"{field} must be valid JSON")
+
+    # Validate Azure Content Safety endpoint if provided
+    azure_endpoint = config_data.get('AZURE_CONTENT_SAFETY_ENDPOINT', '')
+    if azure_endpoint and azure_endpoint != '[REDACTED]':
+        if not azure_endpoint.startswith(('https://', 'http://')):
+            raise ValueError("AZURE_CONTENT_SAFETY_ENDPOINT must be a valid URL starting with https:// or http://")
+
+        # Basic URL validation
+        try:
+            parsed = urlparse(azure_endpoint)
+            if not parsed.netloc:
+                raise ValueError("AZURE_CONTENT_SAFETY_ENDPOINT must be a valid URL")
+        except Exception:
+            raise ValueError("AZURE_CONTENT_SAFETY_ENDPOINT must be a valid URL")
+
+    # Validate Azure enabled requires both endpoint and key
+    azure_enabled = config_data.get('AZURE_CONTENT_SAFETY_ENABLED', 'false').lower() == 'true'
+    if azure_enabled:
+        azure_key = config_data.get('AZURE_CONTENT_SAFETY_KEY', '')
+        if not azure_endpoint or azure_endpoint == '[REDACTED]':
+            if not os.getenv('AZURE_CONTENT_SAFETY_ENDPOINT'):
+                raise ValueError("AZURE_CONTENT_SAFETY_ENDPOINT is required when Azure Content Safety is enabled")
+        if not azure_key or azure_key == '[REDACTED]':
+            if not os.getenv('AZURE_CONTENT_SAFETY_KEY'):
+                raise ValueError("AZURE_CONTENT_SAFETY_KEY is required when Azure Content Safety is enabled")
 
 @app.post("/api/env-config", response_model=ConfigResponse)
 async def update_env_config(request: ConfigUpdateRequest):
@@ -1553,6 +1949,10 @@ async def get_config():
             "enabled": LLMGUARD_ENABLED,
             "scanners": [type(scanner).__name__ for scanner in LLMGUARD_SCANNERS] if LLMGUARD_ENABLED else [],
             "config": LLMGUARD_CONFIG if LLMGUARD_ENABLED else {}
+        },
+        "azure_content_safety": {
+            "enabled": AZURE_CONTENT_SAFETY_ENABLED,
+            "config": AZURE_CONTENT_SAFETY_CONFIG if AZURE_CONTENT_SAFETY_ENABLED else {}
         },
         "openai_moderation": {
             "enabled": moderation
