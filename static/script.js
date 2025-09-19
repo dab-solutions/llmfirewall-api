@@ -749,7 +749,7 @@ class ConfigUI {
 
         const azureSelfHarmThreshold = document.getElementById('azureSelfHarmThreshold');
         if (azureSelfHarmThreshold) {
-            azureSelfHarmThreshold.value = config.AZURE_CONTENT_SAFETY_SELF_HARM_THRESHOLD || '4';
+            azureSelfHarmThreshold.value = config.AZURE_CONTENT_SAFETY_SELFHARM_THRESHOLD || '4';
             const display = document.getElementById('azureSelfHarmThreshold-value');
             if (display) display.textContent = azureSelfHarmThreshold.value;
         }

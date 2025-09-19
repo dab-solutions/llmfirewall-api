@@ -467,7 +467,7 @@ def parse_azure_content_safety_config() -> Tuple[bool, Any, Dict[str, Any]]:
             'text_enabled': os.getenv("AZURE_CONTENT_SAFETY_TEXT_ENABLED", "true").lower() == "true",
             'jailbreak_enabled': os.getenv("AZURE_CONTENT_SAFETY_JAILBREAK_ENABLED", "true").lower() == "true",
             'hate_threshold': int(os.getenv("AZURE_CONTENT_SAFETY_HATE_THRESHOLD", "0")),  # 0-7, 0 means most strict
-            'self_harm_threshold': int(os.getenv("AZURE_CONTENT_SAFETY_SELF_HARM_THRESHOLD", "0")),
+            'selfharm_threshold': int(os.getenv("AZURE_CONTENT_SAFETY_SELFHARM_THRESHOLD", "0")),
             'sexual_threshold': int(os.getenv("AZURE_CONTENT_SAFETY_SEXUAL_THRESHOLD", "0")),
             'violence_threshold': int(os.getenv("AZURE_CONTENT_SAFETY_VIOLENCE_THRESHOLD", "0")),
             'jailbreak_threshold': float(os.getenv("AZURE_CONTENT_SAFETY_JAILBREAK_THRESHOLD", "0.5")),  # 0.0-1.0
@@ -1611,7 +1611,7 @@ async def get_env_config():
             'AZURE_CONTENT_SAFETY_TEXT_ENABLED': 'true',
             'AZURE_CONTENT_SAFETY_JAILBREAK_ENABLED': 'true',
             'AZURE_CONTENT_SAFETY_HATE_THRESHOLD': '0',
-            'AZURE_CONTENT_SAFETY_SELF_HARM_THRESHOLD': '0',
+            'AZURE_CONTENT_SAFETY_SELFHARM_THRESHOLD': '0',
             'AZURE_CONTENT_SAFETY_SEXUAL_THRESHOLD': '0',
             'AZURE_CONTENT_SAFETY_VIOLENCE_THRESHOLD': '0',
             'AZURE_CONTENT_SAFETY_JAILBREAK_THRESHOLD': '0.5'
@@ -1653,7 +1653,7 @@ def validate_configuration(config_data: Dict[str, str]) -> None:
 
     # Validate numeric fields
     numeric_fields = ['THREAD_POOL_WORKERS', 'LLMGUARD_TOKEN_LIMIT', 
-                     'AZURE_CONTENT_SAFETY_HATE_THRESHOLD', 'AZURE_CONTENT_SAFETY_SELF_HARM_THRESHOLD',
+                     'AZURE_CONTENT_SAFETY_HATE_THRESHOLD', 'AZURE_CONTENT_SAFETY_SELFHARM_THRESHOLD',
                      'AZURE_CONTENT_SAFETY_SEXUAL_THRESHOLD', 'AZURE_CONTENT_SAFETY_VIOLENCE_THRESHOLD']
     for field in numeric_fields:
         if field in config_data:
