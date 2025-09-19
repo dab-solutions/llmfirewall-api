@@ -61,6 +61,16 @@
                 >
                     LLM Guard
                 </button>
+                <button
+                    class="tab-button"
+                    id="tab-azure"
+                    role="tab"
+                    aria-selected="false"
+                    aria-controls="panel-azure"
+                    tabindex="-1"
+                >
+                    Azure AI Content Safety
+                </button>
                 <button 
                     class="tab-button" 
                     id="tab-advanced" 
@@ -371,6 +381,187 @@
                     </div>
                 </div>
 
+                <!-- Azure AI Content Safety Configuration -->
+                <div class="tab-panel" id="panel-azure" role="tabpanel" aria-labelledby="tab-azure">
+                    <h2>Azure AI Content Safety Configuration</h2>
+                    <p class="help-text">Configure Azure AI Content Safety for advanced content moderation and jailbreak detection.</p>
+
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input 
+                                type="checkbox" 
+                                id="azureEnabled" 
+                                name="AZURE_CONTENT_SAFETY_ENABLED" 
+                                value="on">
+                            <span class="checkmark"></span>
+                            Enable Azure AI Content Safety
+                        </label>
+                        <div class="help-text">
+                            Enable Azure AI Content Safety for content moderation and jailbreak detection.
+                        </div>
+                    </div>
+
+                    <div id="azure-settings" class="settings-group">
+                        <h3>Azure Credentials</h3>
+
+                        <div class="form-group">
+                            <label for="azureEndpoint">Azure Content Safety Endpoint</label>
+                            <input 
+                                type="url" 
+                                id="azureEndpoint" 
+                                name="AZURE_CONTENT_SAFETY_ENDPOINT" 
+                                placeholder="https://your-resource.cognitiveservices.azure.com"
+                                aria-describedby="azureEndpoint-help">
+                            <div class="help-text" id="azureEndpoint-help">
+                                Your Azure Content Safety resource endpoint URL.
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="azureKey">Azure Content Safety Key</label>
+                            <input 
+                                type="password" 
+                                id="azureKey" 
+                                name="AZURE_CONTENT_SAFETY_KEY" 
+                                placeholder="Enter your Azure Content Safety key"
+                                aria-describedby="azureKey-help">
+                            <div class="help-text" id="azureKey-help">
+                                Your Azure Content Safety resource access key.
+                            </div>
+                        </div>
+
+                        <h3>Feature Configuration</h3>
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input 
+                                    type="checkbox" 
+                                    id="azureTextEnabled" 
+                                    name="AZURE_CONTENT_SAFETY_TEXT_ENABLED" 
+                                    value="on"
+                                    checked>
+                                <span class="checkmark"></span>
+                                Enable Text Content Analysis
+                            </label>
+                            <div class="help-text">
+                                Analyze text for hate, self-harm, sexual, and violence content.
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input 
+                                    type="checkbox" 
+                                    id="azureJailbreakEnabled" 
+                                    name="AZURE_CONTENT_SAFETY_JAILBREAK_ENABLED" 
+                                    value="true"
+                                    checked>
+                                <span class="checkmark"></span>
+                                Enable Jailbreak Detection
+                            </label>
+                            <div class="help-text">
+                                Detect attempts to bypass AI safety mechanisms.
+                            </div>
+                        </div>
+
+                        <h3>Content Safety Thresholds</h3>
+                        <p class="help-text">Set severity thresholds (0-7) for content categories. Lower values are more strict.</p>
+
+                        <div class="form-group">
+                            <label for="azureHateThreshold">
+                                Hate Content Threshold: <span id="azureHateThreshold-value">0</span>
+                            </label>
+                            <input 
+                                type="range" 
+                                id="azureHateThreshold" 
+                                name="AZURE_CONTENT_SAFETY_HATE_THRESHOLD" 
+                                min="0" 
+                                max="7" 
+                                value="0" 
+                                step="1"
+                                aria-describedby="azureHateThreshold-help">
+                            <div class="help-text" id="azureHateThreshold-help">
+                                Threshold for hate speech detection. 0 = most strict, 7 = least strict.
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="azureSelfHarmThreshold">
+                                Self-Harm Threshold: <span id="azureSelfHarmThreshold-value">0</span>
+                            </label>
+                            <input
+                                type="range" 
+                                id="azureSelfHarmThreshold" 
+                                name="AZURE_CONTENT_SAFETY_SELF_HARM_THRESHOLD" 
+                                min="0" 
+                                max="7" 
+                                value="0" 
+                                step="1"
+                                aria-describedby="azureSelfHarmThreshold-help">
+                            <div class="help-text" id="azureSelfHarmThreshold-help">
+                                Threshold for self-harm content detection. 0 = most strict, 7 = least strict.
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="azureSexualThreshold">
+                                Sexual Content Threshold: <span id="azureSexualThreshold-value">0</span>
+                            </label>
+                            <input
+                                type="range" 
+                                id="azureSexualThreshold" 
+                                name="AZURE_CONTENT_SAFETY_SEXUAL_THRESHOLD" 
+                                min="0" 
+                                max="7" 
+                                value="0" 
+                                step="1"
+                                aria-describedby="azureSexualThreshold-help">
+                            <div class="help-text" id="azureSexualThreshold-help">
+                                Threshold for sexual content detection. 0 = most strict, 7 = least strict.
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="azureViolenceThreshold">
+                                Violence Threshold: <span id="azureViolenceThreshold-value">0</span>
+                            </label>
+                            <input 
+                                type="range" 
+                                id="azureViolenceThreshold" 
+                                name="AZURE_CONTENT_SAFETY_VIOLENCE_THRESHOLD" 
+                                min="0" 
+                                max="7" 
+                                value="0" 
+                                step="1"
+                                aria-describedby="azureViolenceThreshold-help">
+                            <div class="help-text" id="azureViolenceThreshold-help">
+                                Threshold for violence content detection. 0 = most strict, 7 = least strict.
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="azureJailbreakThreshold">
+                                Jailbreak Detection Threshold: <span id="azureJailbreakThreshold-value">0.5</span>
+                            </label>
+                            <input
+                                type="range" 
+                                id="azureJailbreakThreshold" 
+                                name="AZURE_CONTENT_SAFETY_JAILBREAK_THRESHOLD" 
+                                min="0" 
+                                max="1" 
+                                value="0.5" 
+                                step="0.1"
+                                aria-describedby="azureJailbreakThreshold-help">
+                            <div class="help-text" id="azureJailbreakThreshold-help">
+                                Threshold for jailbreak detection. 0.0 = most strict, 1.0 = least strict.
+                            </div>
+                        </div>
+
+                        <!-- Hidden fields for form submission -->
+                        <input type="hidden" id="azureJailbreakEnabledHidden" name="AZURE_CONTENT_SAFETY_JAILBREAK_ENABLED" value="false">
+                    </div>
+                </div>
+
                 <!-- Advanced Configuration -->
                 <div class="tab-panel" id="panel-advanced" role="tabpanel" aria-labelledby="tab-advanced">
                     <h2>Advanced Configuration</h2>
@@ -382,7 +573,7 @@
                         <label for="anonymizeEntities">
                             Anonymize Entities (JSON Array)
                         </label>
-                        <textarea 
+                        <textarea
                             id="anonymizeEntities" 
                             name="LLMGUARD_ANONYMIZE_ENTITIES" 
                             rows="3"

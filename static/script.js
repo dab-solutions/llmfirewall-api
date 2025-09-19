@@ -268,6 +268,12 @@ class ConfigUI {
         llmguardScanners.forEach(checkbox => {
             checkbox.addEventListener('change', this.updateLLMGuardScanners.bind(this));
         });
+
+        // Azure AI Content Safety enable/disable toggle
+        const azureEnabled = document.getElementById('azureEnabled');
+        if (azureEnabled) {
+            azureEnabled.addEventListener('change', this.updateAzureSettingsVisibility.bind(this));
+        }
     }
 
     /**
@@ -308,6 +314,25 @@ class ConfigUI {
     updateLLMGuardSettingsVisibility() {
         const enabled = document.getElementById('llmguardEnabled')?.checked || false;
         const settings = document.getElementById('llmguard-settings');
+        
+        if (settings) {
+            settings.style.opacity = enabled ? '1' : '0.5';
+            settings.style.pointerEvents = enabled ? 'auto' : 'none';
+            
+            // Update ARIA attributes
+            const inputs = settings.querySelectorAll('input, select');
+            inputs.forEach(input => {
+                input.setAttribute('aria-disabled', !enabled);
+            });
+        }
+    }
+
+    /**
+     * Update Azure AI Content Safety settings visibility based on enabled state
+     */
+    updateAzureSettingsVisibility() {
+        const enabled = document.getElementById('azureEnabled')?.checked || false;
+        const settings = document.getElementById('azure-settings');
         
         if (settings) {
             settings.style.opacity = enabled ? '1' : '0.5';
@@ -363,13 +388,19 @@ class ConfigUI {
         config.LLMGUARD_ENABLED = config.LLMGUARD_ENABLED === 'on' ? 'true' : 'false';
         config.LLMGUARD_FAIL_FAST = config.LLMGUARD_FAIL_FAST === 'on' ? 'true' : 'false';
         config.TOKENIZERS_PARALLELISM = config.TOKENIZERS_PARALLELISM === 'on' ? 'true' : 'false';
+        config.AZURE_CONTENT_SAFETY_ENABLED = config.AZURE_CONTENT_SAFETY_ENABLED === 'on' ? 'true' : 'false';
+        config.AZURE_CONTENT_SAFETY_TEXT_ENABLED = config.AZURE_CONTENT_SAFETY_TEXT_ENABLED === 'on' ? 'true' : 'false';
         
         // Handle API keys - don't send masked values, exclude them if unchanged
-        const apiKeyFields = ['HF_TOKEN', 'TOGETHER_API_KEY', 'OPENAI_API_KEY'];
-        const apiKeyElementIds = ['hfToken', 'togetherApiKey', 'openaiApiKey'];
+        const apiKeyFields = ['HF_TOKEN', 'TOGETHER_API_KEY', 'OPENAI_API_KEY', 'AZURE_CONTENT_SAFETY_KEY'];
+        const apiKeyElementIds = ['hfToken', 'togetherApiKey', 'openaiApiKey', 'azureKey'];
         
-        apiKeyFields.forEach((fieldName, index) => {
-            const element = document.getElementById(apiKeyElementIds[index]);
+        // Handle Azure endpoint separately (treated like an API key for masking)
+        const sensitiveFields = ['HF_TOKEN', 'TOGETHER_API_KEY', 'OPENAI_API_KEY', 'AZURE_CONTENT_SAFETY_KEY', 'AZURE_CONTENT_SAFETY_ENDPOINT'];
+        const sensitiveElementIds = ['hfToken', 'togetherApiKey', 'openaiApiKey', 'azureKey', 'azureEndpoint'];
+        
+        sensitiveFields.forEach((fieldName, index) => {
+            const element = document.getElementById(sensitiveElementIds[index]);
             if (element) {
                 const isMasked = element.dataset.hasRealValue === "false";
                 const currentValue = config[fieldName];
@@ -616,35 +647,131 @@ class ConfigUI {
             const display = document.getElementById('promptInjectionThreshold-value');
             if (display) display.textContent = promptInjectionThreshold.value;
         }
-        
+
         if (sentimentThreshold) {
             sentimentThreshold.value = config.LLMGUARD_SENTIMENT_THRESHOLD || '0.5';
             const display = document.getElementById('sentimentThreshold-value');
             if (display) display.textContent = sentimentThreshold.value;
         }
-        
+
         if (biasThreshold) {
             biasThreshold.value = config.LLMGUARD_BIAS_THRESHOLD || '0.7';
             const display = document.getElementById('biasThreshold-value');
             if (display) display.textContent = biasThreshold.value;
         }
-        
+
         if (tokenLimit) {
             tokenLimit.value = config.LLMGUARD_TOKEN_LIMIT || '200';
         }
-        
+
         if (failFast) {
             failFast.checked = config.LLMGUARD_FAIL_FAST === 'true' || config.LLMGUARD_FAIL_FAST === true;
         }
-        
+
         // Advanced settings
         const tokenizersParallelism = document.getElementById('tokenizersParallelism');
         if (tokenizersParallelism) {
             tokenizersParallelism.checked = config.TOKENIZERS_PARALLELISM === 'true' || config.TOKENIZERS_PARALLELISM === true;
         }
+
+        // Azure AI Content Safety settings
+        const azureEnabled = document.getElementById('azureEnabled');
+        if (azureEnabled) {
+            azureEnabled.checked = config.AZURE_CONTENT_SAFETY_ENABLED === 'true' || config.AZURE_CONTENT_SAFETY_ENABLED === true;
+        }
+
+        const azureTextEnabled = document.getElementById('azureTextEnabled');
+        if (azureTextEnabled) {
+            azureTextEnabled.checked = config.AZURE_CONTENT_SAFETY_TEXT_ENABLED === 'true' || config.AZURE_CONTENT_SAFETY_TEXT_ENABLED === true;
+        }
+
+        const azureEndpoint = document.getElementById('azureEndpoint');
+        if (azureEndpoint) {
+            if (config.AZURE_CONTENT_SAFETY_ENDPOINT && config.AZURE_CONTENT_SAFETY_ENDPOINT !== '[REDACTED]') {
+                azureEndpoint.value = config.AZURE_CONTENT_SAFETY_ENDPOINT;
+                azureEndpoint.placeholder = '';
+                azureEndpoint.style.fontStyle = "";
+                azureEndpoint.style.color = "";
+                azureEndpoint.dataset.hasRealValue = "true";
+            } else if (config.AZURE_CONTENT_SAFETY_ENDPOINT === '[REDACTED]') {
+                azureEndpoint.value = '••••••••••••••••••••'; // Masked value
+                azureEndpoint.placeholder = '';
+                azureEndpoint.style.fontStyle = "normal";
+                azureEndpoint.style.color = "#6b7280";
+                azureEndpoint.dataset.hasRealValue = "false";
+                azureEndpoint.dataset.originalValue = '[REDACTED]';
+            } else {
+                azureEndpoint.value = '';
+                azureEndpoint.placeholder = "https://your-resource.cognitiveservices.azure.com/";
+                azureEndpoint.style.fontStyle = "";
+                azureEndpoint.style.color = "";
+                azureEndpoint.dataset.hasRealValue = "true";
+            }
+        }
         
-        // Update LLM Guard settings visibility
+        const azureKey = document.getElementById('azureKey');
+        if (azureKey) {
+            if (config.AZURE_CONTENT_SAFETY_KEY && config.AZURE_CONTENT_SAFETY_KEY !== '[REDACTED]') {
+                azureKey.value = config.AZURE_CONTENT_SAFETY_KEY;
+                azureKey.placeholder = '';
+                azureKey.style.fontStyle = "";
+                azureKey.style.color = "";
+                azureKey.dataset.hasRealValue = "true";
+            } else if (config.AZURE_CONTENT_SAFETY_KEY === '[REDACTED]') {
+                azureKey.value = '••••••••••••••••••••'; // Masked value
+                azureKey.placeholder = '';
+                azureKey.style.fontStyle = "normal";
+                azureKey.style.color = "#6b7280";
+                azureKey.dataset.hasRealValue = "false";
+                azureKey.dataset.originalValue = '[REDACTED]';
+            } else {
+                azureKey.value = '';
+                azureKey.placeholder = "Enter your Azure Content Safety key";
+                azureKey.style.fontStyle = "";
+                azureKey.style.color = "";
+                azureKey.dataset.hasRealValue = "true";
+            }
+        }
+
+        // Azure threshold settings
+        const azureHateThreshold = document.getElementById('azureHateThreshold');
+        if (azureHateThreshold) {
+            azureHateThreshold.value = config.AZURE_HATE_THRESHOLD || '4';
+            const display = document.getElementById('azureHateThreshold-value');
+            if (display) display.textContent = azureHateThreshold.value;
+        }
+
+        const azureSelfHarmThreshold = document.getElementById('azureSelfHarmThreshold');
+        if (azureSelfHarmThreshold) {
+            azureSelfHarmThreshold.value = config.AZURE_SELF_HARM_THRESHOLD || '4';
+            const display = document.getElementById('azureSelfHarmThreshold-value');
+            if (display) display.textContent = azureSelfHarmThreshold.value;
+        }
+
+        const azureSexualThreshold = document.getElementById('azureSexualThreshold');
+        if (azureSexualThreshold) {
+            azureSexualThreshold.value = config.AZURE_SEXUAL_THRESHOLD || '4';
+            const display = document.getElementById('azureSexualThreshold-value');
+            if (display) display.textContent = azureSexualThreshold.value;
+        }
+
+        const azureViolenceThreshold = document.getElementById('azureViolenceThreshold');
+        if (azureViolenceThreshold) {
+            azureViolenceThreshold.value = config.AZURE_VIOLENCE_THRESHOLD || '4';
+            const display = document.getElementById('azureViolenceThreshold-value');
+            if (display) display.textContent = azureViolenceThreshold.value;
+        }
+
+        const azureJailbreakThreshold = document.getElementById('azureJailbreakThreshold');
+        if (azureJailbreakThreshold) {
+            azureJailbreakThreshold.value = config.AZURE_JAILBREAK_THRESHOLD || '4';
+            const display = document.getElementById('azureJailbreakThreshold-value');
+            if (display) display.textContent = azureJailbreakThreshold.value;
+        }
+
+        // Update settings visibility
         this.updateLLMGuardSettingsVisibility();
+        this.updateAzureSettingsVisibility();
     }
 
     /**
