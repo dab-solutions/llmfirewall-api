@@ -742,28 +742,28 @@ class ConfigUI {
         // Azure threshold settings
         const azureHateThreshold = document.getElementById('azureHateThreshold');
         if (azureHateThreshold) {
-            azureHateThreshold.value = config.AZURE_HATE_THRESHOLD || '4';
+            azureHateThreshold.value = config.AZURE_CONTENT_SAFETY_HATE_THRESHOLD || '4';
             const display = document.getElementById('azureHateThreshold-value');
             if (display) display.textContent = azureHateThreshold.value;
         }
 
         const azureSelfHarmThreshold = document.getElementById('azureSelfHarmThreshold');
         if (azureSelfHarmThreshold) {
-            azureSelfHarmThreshold.value = config.AZURE_SELF_HARM_THRESHOLD || '4';
+            azureSelfHarmThreshold.value = config.AZURE_CONTENT_SAFETY_SELF_HARM_THRESHOLD || '4';
             const display = document.getElementById('azureSelfHarmThreshold-value');
             if (display) display.textContent = azureSelfHarmThreshold.value;
         }
 
         const azureSexualThreshold = document.getElementById('azureSexualThreshold');
         if (azureSexualThreshold) {
-            azureSexualThreshold.value = config.AZURE_SEXUAL_THRESHOLD || '4';
+            azureSexualThreshold.value = config.AZURE_CONTENT_SAFETY_SEXUAL_THRESHOLD || '4';
             const display = document.getElementById('azureSexualThreshold-value');
             if (display) display.textContent = azureSexualThreshold.value;
         }
 
         const azureViolenceThreshold = document.getElementById('azureViolenceThreshold');
         if (azureViolenceThreshold) {
-            azureViolenceThreshold.value = config.AZURE_VIOLENCE_THRESHOLD || '4';
+            azureViolenceThreshold.value = config.AZURE_CONTENT_SAFETY_VIOLENCE_THRESHOLD || '4';
             const display = document.getElementById('azureViolenceThreshold-value');
             if (display) display.textContent = azureViolenceThreshold.value;
         }
