@@ -2035,6 +2035,70 @@ class RequestMonitor {
                 `;
             }
         }
+
+        // Azure AI Content Safety Results
+        if (scanResults.azure) {
+            const azure = scanResults.azure;
+            if (azure.enabled) {
+                html += `
+                    <div class="scan-system">
+                        <h6>☁️ Azure AI Content Safety</h6>
+                        <div class="system-details">
+                            <div class="detail-item">
+                                <span class="detail-label">Overall Safe:</span>
+                                <span class="detail-value ${azure.is_safe ? 'safe' : 'unsafe'}">${azure.is_safe ? 'Yes' : 'No'}</span>
+                            </div>
+                `;
+
+                if (azure.severity_scores && Object.keys(azure.severity_scores).length > 0) {
+                    html += '<div class="detail-item"><span class="detail-label">Content Categories:</span><div class="scanner-results">';
+                    for (const [category, severity] of Object.entries(azure.severity_scores)) {
+                        html += `<div class="scanner-result">
+                            ${category}: ${severity}/4
+                        </div>`;
+                    }
+                    html += '</div></div>';
+                }
+
+                if (azure.flagged_categories && azure.flagged_categories.length > 0) {
+                    html += '<div class="detail-item"><span class="detail-label">Flagged Categories:</span><div class="flagged-categories">';
+                    for (const flagged of azure.flagged_categories) {
+                        html += `<div class="flagged-category failed">
+                            ${flagged.category}: ${flagged.severity}/${flagged.threshold}
+                        </div>`;
+                    }
+                    html += '</div></div>';
+                }
+
+                // Show enabled features
+                const features = [];
+                if (azure.text_enabled) features.push('Text Analysis');
+                if (azure.jailbreak_enabled) features.push('Jailbreak Detection');
+
+                if (features.length > 0) {
+                    html += `
+                        <div class="detail-item">
+                            <span class="detail-label">Features:</span>
+                            <span class="detail-value">${features.join(', ')}</span>
+                        </div>
+                    `;
+                }
+
+                html += '</div></div>';
+            } else {
+                html += `
+                    <div class="scan-system">
+                        <h6>☁️ Azure AI Content Safety</h6>
+                        <div class="system-details">
+                            <div class="detail-item">
+                                <span class="detail-label">Status:</span>
+                                <span class="detail-value disabled">Disabled</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        }
         
         // Forwarding Results - only show if forwarding was attempted
         if (scanResults.forwarding && scanResults.forwarding.enabled) {
