@@ -8,6 +8,7 @@ Currently supports:
 * [LLamaFirewall](https://github.com/meta-llama/PurpleLlama/tree/main/LlamaFirewall)
 * [LLM Guard](https://github.com/protectai/llm-guard) - Advanced security scanning with 15+ scanners
 * [OpenAI Moderation API](https://platform.openai.com/docs/guides/moderation)
+* [Azure AI Content Safety](https://azure.microsoft.com/en-us/products/ai-services/ai-content-safety) - Enterprise-grade content moderation with jailbreak detection
 
 Make sure to ask for access to the relevant models here: https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M.
 
@@ -39,10 +40,11 @@ Make sure to ask for access to the relevant models here: https://huggingface.co/
 - **Tag-based organization** for environment and purpose separation
 - **SSRF protection** and comprehensive input validation
 
-### �🛡️ Three-Layer Security Architecture
+### 🛡️ Four-Layer Security Architecture
 - **LlamaFirewall**: Primary protection against prompt injection attacks
 - **LLM Guard**: Advanced content analysis with multiple specialized scanners
 - **OpenAI Moderation**: Commercial content moderation service
+- **Azure AI Content Safety**: Enterprise-grade content moderation with advanced jailbreak detection
 
 ### 🔧 LLM Guard Integration
 This API includes comprehensive [LLM Guard](https://github.com/protectai/llm-guard) integration with support for:
@@ -56,6 +58,23 @@ This API includes comprehensive [LLM Guard](https://github.com/protectai/llm-gua
 - **Custom regex patterns** - Flexible pattern matching
 
 See [README_LLMGUARD.md](./README_LLMGUARD.md) for detailed LLM Guard configuration and usage.
+
+### 🔷 Azure AI Content Safety Integration
+This API includes enterprise-grade [Azure AI Content Safety](https://azure.microsoft.com/en-us/products/ai-services/ai-content-safety) integration with:
+- **Text Content Analysis** - Multi-category content safety detection
+  - **Hate speech detection** - Advanced hate and harassment detection
+  - **Sexual content filtering** - Adult and sexual content identification
+  - **Violence detection** - Violent content and imagery detection
+  - **Self-harm prevention** - Self-harm and suicide-related content detection
+- **Jailbreak Attack Detection** - Advanced prompt injection and jailbreak attempt detection
+  - **Real-time analysis** - Immediate threat detection
+  - **Contextual understanding** - Document-aware jailbreak detection
+  - **Configurable thresholds** - Fine-tuned sensitivity controls
+- **Enterprise Features**
+  - **Scalable and reliable** - Built on Azure's global infrastructure
+  - **Compliance ready** - Meets enterprise security and compliance requirements
+  - **Real-time processing** - Low-latency content analysis
+  - **Comprehensive logging** - Detailed analysis results and metrics
 
 ### 🏗️ Production-Ready Features
 - **Docker support** with multi-stage builds
@@ -90,6 +109,24 @@ TOGETHER_API_KEY=your_together_api_key_here
 # Get your key from: https://platform.openai.com/api-keys
 # Your account must be funded to use the moderation endpoint
 OPENAI_API_KEY=your_openai_api_key_here
+
+# Azure AI Content Safety configuration (Optional)
+# Create a Content Safety resource in Azure and get the endpoint and key
+# Documentation: https://docs.microsoft.com/en-us/azure/cognitive-services/content-safety/
+AZURE_CONTENT_SAFETY_ENABLED=false
+AZURE_CONTENT_SAFETY_ENDPOINT=https://your-resource-name.cognitiveservices.azure.com/
+AZURE_CONTENT_SAFETY_KEY=your_azure_content_safety_key_here
+
+# Azure Content Safety Features
+AZURE_CONTENT_SAFETY_TEXT_ENABLED=true      # Enable text content analysis
+AZURE_CONTENT_SAFETY_JAILBREAK_ENABLED=true # Enable jailbreak attack detection
+
+# Azure Content Safety Thresholds (0-7, 0 = most strict)
+AZURE_CONTENT_SAFETY_HATE_THRESHOLD=0       # Hate speech detection
+AZURE_CONTENT_SAFETY_SELFHARM_THRESHOLD=0   # Self-harm content detection
+AZURE_CONTENT_SAFETY_SEXUAL_THRESHOLD=0     # Sexual content detection
+AZURE_CONTENT_SAFETY_VIOLENCE_THRESHOLD=0   # Violence detection
+AZURE_CONTENT_SAFETY_JAILBREAK_THRESHOLD=0.5 # Jailbreak detection (0.0-1.0)
 
 # LlamaFirewall Scanner configuration
 LLAMAFIREWALL_SCANNERS={"USER": ["PROMPT_GUARD", "MODERATION", "PII_DETECTION"]}
@@ -129,7 +166,7 @@ cp .env.template .env
 The API includes a web-based configuration panel for easy management:
 - **Access**: `http://localhost:8000/` (after starting the server)
 - **Features**: Real-time configuration updates, credential management, JSON validation
-- **Tabs**: Performance, API Keys, LlamaFirewall, LLM Guard, and Advanced settings
+- **Tabs**: Performance, API Keys, LlamaFirewall, LLM Guard, Azure AI Content Safety, and Advanced settings
 - **Security**: Sensitive values are masked and preserved when updating
 
 ## Setup
@@ -143,7 +180,18 @@ The API includes a web-based configuration panel for easy management:
 
 2. Create and configure your `.env` file (see Environment Configuration above)
 
-3. Run the API server:
+3. (Optional) Set up Azure AI Content Safety:
+   - Create an Azure account and subscription
+   - Create a Content Safety resource in the Azure portal
+   - Get your endpoint URL and access key
+   - Add them to your `.env` file:
+     ```bash
+     AZURE_CONTENT_SAFETY_ENABLED=true
+     AZURE_CONTENT_SAFETY_ENDPOINT=https://your-resource-name.cognitiveservices.azure.com/
+     AZURE_CONTENT_SAFETY_KEY=your_azure_content_safety_key_here
+     ```
+
+4. Run the API server:
 ```bash
 uvicorn api:app --reload --host 0.0.0.0 --port 8000 --reload
 ```
@@ -325,7 +373,44 @@ Response:
             "Secrets": 0.0
         }
     },
-    "scan_type": "llamafirewall+llm_guard+openai_moderation"
+    "azure_results": {
+        "enabled": true,
+        "is_safe": true,
+        "flagged_categories": [],
+        "severity_scores": {
+            "hate": 0,
+            "selfharm": 0,
+            "sexual": 0,
+            "violence": 0
+        },
+        "text_result": {
+            "categories_analysis": [
+                {
+                    "category": "Hate",
+                    "severity": 0
+                },
+                {
+                    "category": "SelfHarm", 
+                    "severity": 0
+                },
+                {
+                    "category": "Sexual",
+                    "severity": 0
+                },
+                {
+                    "category": "Violence",
+                    "severity": 0
+                }
+            ]
+        },
+        "jailbreak_result": {
+            "userPromptAnalysis": {
+                "attackDetected": false
+            },
+            "documentsAnalysis": []
+        }
+    },
+    "scan_type": "llamafirewall+llm_guard+openai_moderation+azure_content_safety"
 }
 ```
 
@@ -361,6 +446,18 @@ Response:
     },
     "openai_moderation": {
         "enabled": true
+    },
+    "azure_content_safety": {
+        "enabled": true,
+        "text_enabled": true,
+        "jailbreak_enabled": true,
+        "thresholds": {
+            "hate_threshold": 0,
+            "selfharm_threshold": 0,
+            "sexual_threshold": 0,
+            "violence_threshold": 0,
+            "jailbreak_threshold": 0.5
+        }
     }
 }
 ```
