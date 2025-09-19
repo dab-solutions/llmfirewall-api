@@ -700,6 +700,83 @@ class ScanResponse(BaseModel):
     wait=wait_exponential(multiplier=1, min=4, max=10),
     reraise=True
 )
+async def perform_azure_jailbreak_detection(user_prompt: str, documents: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Perform Azure AI Content Safety jailbreak detection using REST API.
+
+    Args:
+        user_prompt: The user input to analyze for jailbreak attacks
+        documents: Optional list of document strings to analyze
+
+    Returns:
+        Dictionary containing jailbreak detection results
+    """
+    if not AZURE_CONTENT_SAFETY_ENABLED or not AZURE_CONTENT_SAFETY_CONFIG:
+        return {"enabled": False, "userPromptAnalysis": None, "documentsAnalysis": None}
+
+    if documents is None:
+        documents = []
+
+    try:
+        # Get configuration
+        endpoint = AZURE_CONTENT_SAFETY_CONFIG.get('endpoint', '')
+        key = os.getenv("AZURE_CONTENT_SAFETY_KEY", "")  # Get key from environment for security
+
+        if not endpoint or not key:
+            logger.error("Azure Content Safety endpoint or key missing for jailbreak detection")
+            return {"enabled": False, "error": "Missing configuration"}
+
+        # Construct the REST API URL
+        # Remove trailing slash from endpoint if present
+        base_endpoint = endpoint.rstrip('/')
+        api_url = f"{base_endpoint}/contentsafety/text:shieldPrompt?api-version=2024-09-01"
+
+        # Prepare request headers with authentication
+        headers = {
+            'Ocp-Apim-Subscription-Key': key,
+            'Content-Type': 'application/json'
+        }
+
+        # Prepare request body
+        request_body = {
+            'userPrompt': user_prompt,
+            'documents': documents
+        }
+
+        logger.debug(f"Making Azure jailbreak detection request to: {api_url}")
+        logger.debug(f"Request body: userPrompt length={len(user_prompt)}, documents count={len(documents)}")
+
+        # Make the HTTP request
+        async with aiohttp.ClientSession() as session:
+            async with session.post(api_url, headers=headers, json=request_body) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    logger.debug(f"Azure jailbreak detection successful: {result}")
+                    return result
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Azure jailbreak detection failed with status {response.status}: {error_text}")
+                    return {
+                        "enabled": False,
+                        "error": f"HTTP {response.status}: {error_text}",
+                        "userPromptAnalysis": None,
+                        "documentsAnalysis": None
+                    }
+
+    except Exception as e:
+        logger.error(f"Azure jailbreak detection request failed: {e}", exc_info=True)
+        return {
+            "enabled": False,
+            "error": str(e),
+            "userPromptAnalysis": None,
+            "documentsAnalysis": None
+        }
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    reraise=True
+)
 async def perform_azure_content_safety_scan(content: str) -> Dict[str, Any]:
     """
     Perform Azure AI Content Safety scanning with retry logic.
@@ -773,10 +850,39 @@ async def perform_azure_content_safety_scan(content: str) -> Dict[str, Any]:
                 logger.error(f"Azure Content Safety text analysis failed: {e}")
                 # Don't fail the entire request, just log and continue
 
-        # Note: Jailbreak detection is not available in the current Azure AI Content Safety SDK
-        # The jailbreak detection feature may be available in preview versions or different APIs
-        logger.debug("Azure jailbreak detection not implemented - feature not available in current SDK")
-        
+        # Perform jailbreak detection using REST API (not available in SDK)
+        if AZURE_CONTENT_SAFETY_CONFIG.get('jailbreak_enabled', True):
+            try:
+                jailbreak_result = await perform_azure_jailbreak_detection(content, [])
+                results["jailbreak_result"] = jailbreak_result
+
+                # Check if jailbreak attack was detected in user prompt
+                if jailbreak_result and jailbreak_result.get("userPromptAnalysis", {}).get("attackDetected", False):
+                    results["is_safe"] = False
+                    results["flagged_categories"].append({
+                        "category": "jailbreak_user_prompt",
+                        "severity": 1,  # Binary detection
+                        "threshold": AZURE_CONTENT_SAFETY_CONFIG.get('jailbreak_threshold', 0.5)  # Use configured threshold
+                    })
+                    logger.warning("Azure Content Safety: Jailbreak attack detected in user prompt")
+
+                # Check if jailbreak attack was detected in documents
+                documents_analysis = jailbreak_result.get("documentsAnalysis", [])
+                if documents_analysis:
+                    for i, doc_analysis in enumerate(documents_analysis):
+                        if doc_analysis.get("attackDetected", False):
+                            results["is_safe"] = False
+                            results["flagged_categories"].append({
+                                "category": f"jailbreak_document_{i}",
+                                "severity": 1,  # Binary detection
+                                "threshold": AZURE_CONTENT_SAFETY_CONFIG.get('jailbreak_threshold', 0.5)  # Use configured threshold
+                            })
+                            logger.warning(f"Azure Content Safety: Jailbreak attack detected in document {i}")
+
+            except Exception as e:
+                logger.error(f"Azure Content Safety jailbreak detection failed: {e}")
+                # Don't fail the entire request, just log and continue
+
         logger.debug(f"Azure Content Safety scan completed. Safe: {results['is_safe']}")
         return results
 

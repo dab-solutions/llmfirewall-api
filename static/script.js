@@ -390,6 +390,7 @@ class ConfigUI {
         config.TOKENIZERS_PARALLELISM = config.TOKENIZERS_PARALLELISM === 'on' ? 'true' : 'false';
         config.AZURE_CONTENT_SAFETY_ENABLED = config.AZURE_CONTENT_SAFETY_ENABLED === 'on' ? 'true' : 'false';
         config.AZURE_CONTENT_SAFETY_TEXT_ENABLED = config.AZURE_CONTENT_SAFETY_TEXT_ENABLED === 'on' ? 'true' : 'false';
+        config.AZURE_CONTENT_SAFETY_JAILBREAK_ENABLED = config.AZURE_CONTENT_SAFETY_JAILBREAK_ENABLED === 'on' ? 'true' : 'false';
         
         // Handle API keys - don't send masked values, exclude them if unchanged
         const apiKeyFields = ['HF_TOKEN', 'TOGETHER_API_KEY', 'OPENAI_API_KEY', 'AZURE_CONTENT_SAFETY_KEY'];
@@ -685,6 +686,11 @@ class ConfigUI {
             azureTextEnabled.checked = config.AZURE_CONTENT_SAFETY_TEXT_ENABLED === 'true' || config.AZURE_CONTENT_SAFETY_TEXT_ENABLED === true;
         }
 
+        const azureJailbreakEnabled = document.getElementById('azureJailbreakEnabled');
+        if (azureJailbreakEnabled) {
+            azureJailbreakEnabled.checked = config.AZURE_CONTENT_SAFETY_JAILBREAK_ENABLED === 'true' || config.AZURE_CONTENT_SAFETY_JAILBREAK_ENABLED === true;
+        }
+
         const azureEndpoint = document.getElementById('azureEndpoint');
         if (azureEndpoint) {
             if (config.AZURE_CONTENT_SAFETY_ENDPOINT && config.AZURE_CONTENT_SAFETY_ENDPOINT !== '[REDACTED]') {
@@ -764,7 +770,7 @@ class ConfigUI {
 
         const azureJailbreakThreshold = document.getElementById('azureJailbreakThreshold');
         if (azureJailbreakThreshold) {
-            azureJailbreakThreshold.value = config.AZURE_JAILBREAK_THRESHOLD || '4';
+            azureJailbreakThreshold.value = config.AZURE_CONTENT_SAFETY_JAILBREAK_THRESHOLD || '0.5';
             const display = document.getElementById('azureJailbreakThreshold-value');
             if (display) display.textContent = azureJailbreakThreshold.value;
         }
